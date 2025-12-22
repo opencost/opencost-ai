@@ -1,0 +1,184 @@
+FROM ollama/ollama:latest
+
+# =============================================================================
+# Install Dependencies
+# =============================================================================
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    jq \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# Install ollmcp (MCP Client for Ollama) and Flask (HTTP API)
+# =============================================================================
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir ollmcp flask pexpect
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+# =============================================================================
+# Configure MCP Server Connection
+# =============================================================================
+# MCP server URL will be configured at runtime via environment variable
+RUN mkdir -p /root/.config/ollmcp
+
+# =============================================================================
+# Copy HTTP API Server
+# =============================================================================
+COPY ollmcp-api-server.py /usr/local/bin/ollmcp-api-server.py
+RUN chmod +x /usr/local/bin/ollmcp-api-server.py
+
+# =============================================================================
+# Pre-pull Default Model (at build time)
+# =============================================================================
+# Allow users to specify a different model at build time via --build-arg
+ARG DEFAULT_MODEL=qwen2.5:0.5b
+
+RUN ollama serve & \
+    OLLAMA_PID=$! && \
+    sleep 5 && \
+    echo "📥 Pre-pulling ${DEFAULT_MODEL} model..." && \
+    ollama pull ${DEFAULT_MODEL} && \
+    kill $OLLAMA_PID && \
+    wait $OLLAMA_PID 2>/dev/null || true
+
+# Set default model as environment variable
+ENV DEFAULT_MODEL=${DEFAULT_MODEL}
+
+# =============================================================================
+# Create Startup Script
+# =============================================================================
+COPY <<'EOF' /usr/local/bin/start-ollama.sh
+#!/bin/bash
+set -e
+
+echo "🚀 Starting Ollama + MCP..."
+
+# -----------------------------------------------------------------------------
+# Configure MCP Server
+# -----------------------------------------------------------------------------
+MCP_SERVER_URL="${MCP_SERVER_URL:-http://opencost.default.svc.cluster.local:8081/mcp}"
+echo "🔧 Configuring MCP server: ${MCP_SERVER_URL}"
+
+# Configure default model (can be overridden at runtime)
+DEFAULT_MODEL="${DEFAULT_MODEL:-qwen2.5:0.5b}"
+echo "🤖 Default model: ${DEFAULT_MODEL}"
+
+cat > /root/.config/ollmcp/servers.json <<MCONFIG
+{
+  "mcpServers": {
+    "opencost": {
+      "type": "streamable_http",
+      "url": "${MCP_SERVER_URL}"
+    }
+  }
+}
+MCONFIG
+
+# -----------------------------------------------------------------------------
+# Start Ollama Server
+# -----------------------------------------------------------------------------
+echo "📡 Starting Ollama server..."
+ollama serve &
+OLLAMA_PID=$!
+
+# Wait for Ollama to be ready
+echo "⏳ Waiting for Ollama to be ready..."
+for i in {1..30}; do
+  if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    echo "✅ Ollama is ready!"
+    break
+  fi
+  sleep 1
+done
+
+# List available models (model already pulled during build)
+echo "📋 Available models:"
+ollama list
+
+# -----------------------------------------------------------------------------
+# Check OpenCost MCP Server Connectivity
+# -----------------------------------------------------------------------------
+echo "⏳ Checking OpenCost MCP server at ${MCP_SERVER_URL}..."
+for i in {1..30}; do
+  if curl -s "${MCP_SERVER_URL}" -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}' 2>&1 | grep -q "opencost-mcp-server"; then
+    echo "✅ OpenCost MCP server is accessible!"
+    break
+  fi
+  if [ $i -eq 30 ]; then
+    echo "⚠️  Warning: Could not connect to OpenCost MCP server"
+    echo "   Continuing anyway - MCP tools may not be available"
+  fi
+  sleep 2
+done
+
+# -----------------------------------------------------------------------------
+# Start HTTP API Server
+# -----------------------------------------------------------------------------
+echo "🌐 Starting HTTP API server on port 8888..."
+python3 /usr/local/bin/ollmcp-api-server.py &
+API_PID=$!
+
+sleep 2
+
+# -----------------------------------------------------------------------------
+# Setup Complete
+# -----------------------------------------------------------------------------
+echo ""
+echo "🎉 Setup complete!"
+echo "📊 Default Model: ${DEFAULT_MODEL}"
+echo "🔗 MCP Server: ${MCP_SERVER_URL}"
+echo "🦙 Ollama API: http://localhost:11434"
+echo "🌐 HTTP API: http://localhost:8888"
+echo ""
+echo "API Endpoints:"
+echo "  GET  /health  - Health check"
+echo "  GET  /models  - List available models"
+echo "  GET  /tools   - List OpenCost MCP tools"
+echo "  POST /query   - Send query to LLM with MCP tools"
+echo ""
+echo "Example Query (using default model):"
+echo '  curl -X POST http://localhost:8888/query \'
+echo '    -H "Content-Type: application/json" \'
+echo '    -d '"'"'{"query":"show me allocation costs"}'"'"
+echo ""
+echo "Example Query (with specific model):"
+echo '  curl -X POST http://localhost:8888/query \'
+echo '    -H "Content-Type: application/json" \'
+echo '    -d '"'"'{"query":"show me allocation costs","model":"'"${DEFAULT_MODEL}"'"}'"'"
+echo ""
+echo "Pull additional models:"
+echo "  ollama pull llama3.1:8b"
+echo "  ollama pull qwen2.5:7b"
+echo "  ollama pull mistral:7b"
+echo ""
+
+# Keep both processes running
+wait -n $OLLAMA_PID $API_PID
+EOF
+
+RUN chmod +x /usr/local/bin/start-ollama.sh
+
+# =============================================================================
+# Create Convenience Wrapper for ollmcp
+# =============================================================================
+COPY <<'EOF' /usr/local/bin/ollmcp-opencost
+#!/bin/bash
+MODEL="${1:-${DEFAULT_MODEL:-qwen2.5:0.5b}}"
+exec ollmcp -j /root/.config/ollmcp/servers.json -m "$MODEL"
+EOF
+
+RUN chmod +x /usr/local/bin/ollmcp-opencost
+
+# =============================================================================
+# Expose Ports and Set Entrypoint
+# =============================================================================
+EXPOSE 11434 8888
+
+ENTRYPOINT ["/usr/local/bin/start-ollama.sh"]
