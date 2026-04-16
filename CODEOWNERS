@@ -1,0 +1,36 @@
+# CODEOWNERS for opencost-ai
+#
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-security/customizing-your-repository/about-code-owners
+#
+# Ordering matters: later matches win. Start broad, then narrow.
+#
+# NOTE: `@opencost/opencost-ai-maintainers` is the intended GitHub team
+# for this repo. Create the team and populate it before relying on
+# this file for required reviews.
+
+# Default owner for anything not matched below.
+*                           @opencost/opencost-ai-maintainers
+
+# Project and contribution governance — maintainer review required.
+/CLAUDE.md                  @opencost/opencost-ai-maintainers
+/README.md                  @opencost/opencost-ai-maintainers
+/CONTRIBUTING.md            @opencost/opencost-ai-maintainers
+/CODEOWNERS                 @opencost/opencost-ai-maintainers
+/LICENSE                    @opencost/opencost-ai-maintainers
+
+# Security-sensitive files. Changes require security-aware review.
+/SECURITY.md                @opencost/opencost-ai-maintainers
+/.github/workflows/         @opencost/opencost-ai-maintainers
+/deploy/                    @opencost/opencost-ai-maintainers
+/docker/                    @opencost/opencost-ai-maintainers
+/Dockerfile                 @opencost/opencost-ai-maintainers
+/Dockerfile.*               @opencost/opencost-ai-maintainers
+
+# Design of record. Changes here must accompany matching code changes.
+/docs/architecture.md       @opencost/opencost-ai-maintainers
+
+# Public API surface. Breaking changes require a version bump.
+/pkg/apiv1/                 @opencost/opencost-ai-maintainers
+
+# Frozen prototype. Do not edit; open an issue instead.
+/legacy/                    @opencost/opencost-ai-maintainers
