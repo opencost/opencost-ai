@@ -112,8 +112,10 @@ func newMux(logger *slog.Logger) http.Handler {
 }
 
 // healthHandler returns a stable JSON liveness document. It does not
-// probe upstream dependencies — that's the concern of readiness, which
-// lands with the bridge client.
+// probe upstream dependencies — that concern belongs to a future
+// /v1/ready endpoint that will land with internal/bridge. Per
+// apiv1.HealthResponse, this endpoint is liveness-only in v0.1;
+// Kubernetes readiness probes must not target it yet.
 func healthHandler(logger *slog.Logger) http.HandlerFunc {
 	resp := apiv1.HealthResponse{Status: "ok", Version: version}
 	body, err := json.Marshal(resp)

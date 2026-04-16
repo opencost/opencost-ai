@@ -108,11 +108,19 @@ type AskResponse struct {
 
 // HealthResponse is the body of GET /v1/health.
 //
-// Liveness (the process is up) and readiness (upstream dependencies
-// reachable) are both encoded via Status. A non-"ok" status indicates
-// the caller should not route traffic to this replica.
+// In the v0.1 scaffold this endpoint is liveness-only: Status is "ok"
+// while the process is up and the HTTP listener is accepting
+// connections. Readiness — whether the configured bridge, Ollama,
+// and OpenCost MCP are reachable — arrives with the internal/bridge
+// client and will populate Status "degraded" when any upstream is
+// unreachable. Callers must treat unknown Status values as degraded.
+//
+// Readiness probes in Kubernetes should therefore point at a future
+// /v1/ready endpoint, not /v1/health, until that work lands. See
+// docs/architecture.md §7.1.
 type HealthResponse struct {
-	// Status is either "ok" or "degraded". Callers must treat unknown
+	// Status is "ok" (liveness OK) or "degraded" (reserved for the
+	// readiness-aware implementation). Callers must treat unknown
 	// values as degraded.
 	Status string `json:"status"`
 
