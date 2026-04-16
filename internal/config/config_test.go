@@ -93,6 +93,13 @@ func TestLoad(t *testing.T) {
 			want: DefaultConfig(),
 		},
 		{
+			// Set-but-empty is treated as unset for this var, per
+			// the Load doc and the common "export FOO=" shell idiom.
+			name: "audit flag empty string is unset",
+			env:  map[string]string{EnvAuditLogQuery: ""},
+			want: DefaultConfig(),
+		},
+		{
 			name:    "empty bridge URL rejected",
 			env:     map[string]string{EnvBridgeURL: ""},
 			wantErr: "BRIDGE_URL: must not be empty",
@@ -215,6 +222,26 @@ func TestValidate(t *testing.T) {
 			name:    "listen addr without port",
 			mutate:  func(c *Config) { c.ListenAddr = "localhost" },
 			wantErr: "missing port",
+		},
+		{
+			name:    "listen addr with empty port",
+			mutate:  func(c *Config) { c.ListenAddr = "localhost:" },
+			wantErr: "missing port",
+		},
+		{
+			name:    "listen addr with non-numeric port",
+			mutate:  func(c *Config) { c.ListenAddr = "localhost:notaport" },
+			wantErr: "invalid port",
+		},
+		{
+			name:    "listen addr ipv6 bracketed",
+			mutate:  func(c *Config) { c.ListenAddr = "[::1]:8080" },
+			wantErr: "",
+		},
+		{
+			name:    "listen addr ipv6 unbracketed",
+			mutate:  func(c *Config) { c.ListenAddr = "::1:8080" },
+			wantErr: "listen addr",
 		},
 		{
 			name:    "empty model",

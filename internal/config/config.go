@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -96,9 +97,11 @@ func OSGetenv(key string) (string, bool) { return os.LookupEnv(key) }
 
 // Load builds a Config by starting from DefaultConfig and overlaying
 // any values supplied by get. An unset variable leaves the default
-// in place; a set-but-empty variable is treated as a configuration
-// error for every field except AuditLogQuery, where empty is not
-// distinguishable from unset in typical shell usage.
+// in place; a set-but-empty variable is rejected for every string
+// and numeric field. For OPENCOST_AI_AUDIT_LOG_QUERY an empty value
+// is treated as unset (leaving the default in place), because many
+// Kubernetes/shell workflows export the var as "" to mean "not
+// configured" rather than an explicit off.
 //
 // Load does not call Validate; callers should invoke Validate on the
 // returned Config before use so that a single error path covers both
@@ -141,7 +144,7 @@ func Load(get Getenv) (Config, error) {
 		}
 		cfg.MaxRequestBytes = n
 	}
-	if v, ok := get(EnvAuditLogQuery); ok {
+	if v, ok := get(EnvAuditLogQuery); ok && v != "" {
 		b, err := parseBool(v)
 		if err != nil {
 			return cfg, fmt.Errorf("%s: %w", EnvAuditLogQuery, err)
@@ -175,11 +178,8 @@ func (c Config) Validate() error {
 
 	if c.ListenAddr == "" {
 		errs = append(errs, errors.New("listen addr: must not be empty"))
-	} else if !strings.Contains(c.ListenAddr, ":") {
-		// Matches the stdlib net.Listen "address missing port" error
-		// ahead of the actual bind, so config errors surface during
-		// Validate rather than at server start.
-		errs = append(errs, fmt.Errorf("listen addr %q: missing port", c.ListenAddr))
+	} else if err := validateListenAddr(c.ListenAddr); err != nil {
+		errs = append(errs, fmt.Errorf("listen addr %q: %w", c.ListenAddr, err))
 	}
 
 	if c.DefaultModel == "" {
@@ -196,6 +196,27 @@ func (c Config) Validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateListenAddr mirrors the checks net.Listen performs before
+// binding, so misconfiguration surfaces at Validate time rather than
+// at server start. Accepts the same input shapes net.Listen does on
+// a "tcp" network: ":8080", "host:8080", "[::1]:8080", "0.0.0.0:8080".
+// Rejects "host:" (empty port) and bare hostnames.
+func validateListenAddr(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if port == "" {
+		return errors.New("missing port")
+	}
+	if _, perr := net.LookupPort("tcp", port); perr != nil {
+		return fmt.Errorf("invalid port %q: %w", port, perr)
+	}
+	// host may be empty (":8080" means all interfaces); that's fine.
+	_ = host
+	return nil
 }
 
 // parseBool accepts the usual true/false spellings plus 1/0, yes/no,
