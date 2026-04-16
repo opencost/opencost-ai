@@ -12,7 +12,6 @@ func TestAskRequest_JSONRoundTrip(t *testing.T) {
 		Query:          "what did my namespace cost yesterday?",
 		Model:          "qwen2.5:7b-instruct",
 		Stream:         true,
-		Format:         FormatJSON,
 		ConversationID: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
 	}
 	b, err := json.Marshal(in)
@@ -40,7 +39,7 @@ func TestAskRequest_OmitsZeroValues(t *testing.T) {
 		t.Errorf("missing query: %s", got)
 	}
 	// Optional fields omitted when empty.
-	for _, unwanted := range []string{"model", "stream", "format", "conversation_id"} {
+	for _, unwanted := range []string{"model", "stream", "conversation_id"} {
 		if strings.Contains(got, `"`+unwanted+`"`) {
 			t.Errorf("unexpected field %q in %s", unwanted, got)
 		}
@@ -136,26 +135,5 @@ func TestProblemContentType(t *testing.T) {
 	t.Parallel()
 	if ProblemContentType != "application/problem+json" {
 		t.Fatalf("RFC 7807 content type regressed: got %q", ProblemContentType)
-	}
-}
-
-func TestFormatConstants(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		v    Format
-		want string
-	}{
-		{"text", FormatText, "text"},
-		{"json", FormatJSON, "json"},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if string(tc.v) != tc.want {
-				t.Fatalf("got %q, want %q", tc.v, tc.want)
-			}
-		})
 	}
 }

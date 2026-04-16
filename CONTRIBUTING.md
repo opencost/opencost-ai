@@ -98,7 +98,8 @@ through it before requesting review:
 
 ## Code style
 
-- **Go 1.22+.** Shell only for CI glue. No new Python in-tree.
+- **Current stable Go (1.26 as of initial commit).** Shell only for CI
+  glue. No new Python in-tree.
 - Prefer the standard library. New third-party deps in `internal/`
   need a justification comment on the import and a note in the PR
   description.

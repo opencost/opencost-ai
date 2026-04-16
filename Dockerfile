@@ -2,7 +2,7 @@
 #
 # opencost-ai-gateway image.
 #
-# Two-stage build: a pinned golang:1.22 builder, then Google's
+# Two-stage build: a golang:1.26 builder, then Google's
 # gcr.io/distroless/static-debian12:nonroot runtime. The runtime image
 # ships UID 65532 ("nonroot") by default and contains no shell or
 # package manager; the gateway is a statically linked binary and has
@@ -15,31 +15,40 @@
 
 # --- build stage --------------------------------------------------------------
 
-ARG GO_VERSION=1.22.12
+# go.mod and this build pin the same Go line: current stable (1.26).
+# 1.26 is a floating tag for the latest 1.26 patch so the shipped
+# binary does not inherit unpatched stdlib CVEs from a stale point
+# release. Release builds override via
+# --build-arg GO_VERSION=<exact-patch> to pin deterministically.
+ARG GO_VERSION=1.26
 ARG BUILDER_IMAGE=golang:${GO_VERSION}-bookworm
 ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
 
 FROM ${BUILDER_IMAGE} AS build
 WORKDIR /src
 
-# Prime the module cache first so source edits don't bust it.
+# Prime the module cache first so source edits don't bust it. A
+# zero-dep module has no go.sum, and a bracket-glob COPY is not
+# portable (legacy Docker build errors on zero matches while BuildKit
+# tolerates it), so we COPY go.mod alone. Once a dependency lands,
+# add `COPY go.sum ./` and re-enable `go mod verify` on the next
+# line.
 COPY go.mod ./
-# go.sum is optional for a zero-dep module; COPY with a glob so the
-# build does not fail before we have one.
-COPY go.su[m] ./
-RUN go mod download && go mod verify
+RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
 COPY pkg ./pkg
 
 # Build flags rationale:
-#   CGO_DISABLED=0 keeps the binary static and lets distroless-static serve it.
+#   CGO_ENABLED=0 keeps the binary static and lets distroless-static serve it.
 #   -trimpath removes build-host paths from the binary (reproducibility).
 #   -buildvcs=false keeps the .git tree out of the embedded build info,
 #     because CI typically copies source without .git.
 #   -ldflags "-s -w" strips symbol and DWARF tables to shrink the image;
-#     main.version is stamped for /v1/version.
+#     main.version is stamped into the binary for build/version metadata
+#     (logged on startup today; exposed via a dedicated endpoint in a
+#     follow-up PR).
 ARG VERSION=dev
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64

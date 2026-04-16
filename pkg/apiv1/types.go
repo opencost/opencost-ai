@@ -1,22 +1,5 @@
 package apiv1
 
-// Format names the shape of the answer field in AskResponse.
-//
-// "text" returns a markdown string; "json" asks the gateway to coerce the
-// model output into structured JSON suitable for UI consumption. The set
-// is intentionally closed: unknown values are rejected at the boundary
-// rather than silently downgraded.
-type Format string
-
-const (
-	// FormatText returns the answer as a markdown-formatted string.
-	FormatText Format = "text"
-
-	// FormatJSON returns the answer as a JSON object; the gateway is
-	// responsible for schema enforcement.
-	FormatJSON Format = "json"
-)
-
 // AskRequest is the body of POST /v1/ask.
 //
 // Field semantics mirror docs/architecture.md §7.2. All validation
@@ -36,10 +19,6 @@ type AskRequest struct {
 	// Stream, when true, switches the response to Server-Sent Events.
 	// Defaults to false.
 	Stream bool `json:"stream,omitempty"`
-
-	// Format selects the answer encoding. Empty is treated as
-	// FormatText.
-	Format Format `json:"format,omitempty"`
 
 	// ConversationID threads a request onto an existing multi-turn
 	// conversation. Must be a UUID when non-empty.
@@ -89,8 +68,10 @@ type AskResponse struct {
 	// not need to correlate by RequestID alone.
 	Query string `json:"query"`
 
-	// Answer is the model-produced response, encoded per the request's
-	// Format field.
+	// Answer is the model-produced response as a markdown-formatted
+	// string. v0.1 intentionally ships one shape; a structured-JSON
+	// variant will land behind an explicit request field when a
+	// consumer actually needs it.
 	Answer string `json:"answer"`
 
 	// ToolCalls lists the MCP tools invoked while producing Answer, in

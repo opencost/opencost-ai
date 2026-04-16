@@ -311,6 +311,10 @@ OPENCOST_AI_AUTH_TOKEN_FILE    default: /var/run/secrets/opencost-ai/token
 
 ### 7.8 Code layout (for Claude Code's initial scaffold)
 
+Language: current stable Go (1.26 as of initial commit). `go.mod` and
+the CI/build toolchain track the same line; this is a greenfield repo
+with no consumers, so there is no reason to pin below current stable.
+
 ```
 opencost-ai/
 ├── CLAUDE.md                   # project-level instructions for Claude Code
