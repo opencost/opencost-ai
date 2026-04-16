@@ -93,7 +93,32 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
       - name: Run govulncheck
-        run: govulncheck ./...
+        # Emit machine-readable findings to a file so the squashed
+        # toolchain commit can reference the exact GO-YYYY-NNNN IDs
+        # and their fix versions. Also prints the human summary so
+        # the run log still documents failures inline. We preserve
+        # the JSON-run exit code (3 on findings) so the check still
+        # fails the PR when vulnerabilities are present.
+        run: |
+          set +e
+          govulncheck -format=json ./... > govulncheck.json
+          exit_code=$?
+          echo "::group::govulncheck text summary"
+          govulncheck ./... || true
+          echo "::endgroup::"
+          exit $exit_code
+      - name: Upload govulncheck report
+        if: always()
+        # Pinned to major tag v4 rather than a commit SHA: this is a
+        # diagnostic-only step and the action is maintained by
+        # GitHub itself. Promote to SHA pin alongside the other
+        # actions in this file the next time they roll.
+        uses: actions/upload-artifact@v4
+        with:
+          name: govulncheck-report
+          path: govulncheck.json
+          if-no-files-found: error
+          retention-days: 14
 
   image:
     name: build distroless image (no push)
