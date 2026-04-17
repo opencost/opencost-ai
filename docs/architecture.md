@@ -418,10 +418,179 @@ treats these as settled and implements against them.
 
 ---
 
-## 11. Hand-off summary for Claude Code
+## 11. What actually shipped in v0.1
 
-- **Start here:** create `CLAUDE.md` at the repo root per §7.8, then scaffold the Go gateway per the same section.
-- **Do not extend** `src/ollmcp-api-server.py`. Move it to `legacy/` with a note.
-- **Do not reinvent** what `ollama-mcp-bridge` already does. Consume it.
-- **Security requirements in §7.5 are non-negotiable** — do not ship code that runs as root, binds without auth, or leaks raw exceptions.
-- **Open questions in §10 should be answered before coding**, not assumed away. (Resolved 2026-04-16 — see §10.)
+Written after the scaffold landed (2026-04-17). This section is the
+authoritative delta between the design above and the code on `main` at
+`v0.1.0`. Where the two disagree, the code wins and this section
+explains why. Where something named in §6–§9 did not make the cut,
+this section says so.
+
+### 11.1 Packages landed (vs. §7.8 target)
+
+```
+cmd/gateway                     shipped   — main.go only, wire-up
+internal/server                 shipped   — handlers, middleware, SSE
+internal/bridge                 shipped   — ollama-mcp-bridge client
+internal/auth                   shipped   — file-backed bearer token
+internal/audit                  shipped   — JSON-line audit logger
+internal/ratelimit              shipped   — per-caller token bucket
+internal/config                 shipped   — env loader + validate
+internal/metrics                shipped   — Prometheus registry
+internal/requestid              shipped   — per-request correlation
+internal/prompt                 NOT SHIPPED — see §11.3
+pkg/apiv1                       shipped   — wire types, no behavior
+deploy/helm/opencost-ai         shipped   — gateway + bridge + ollama
+scripts/air-gap                 shipped   — ORAS export/push/pull, image mirror
+test/integration                shipped   — gateway_test.go
+test/airgap                     shipped   — iptables egress-block harness
+```
+
+`internal/requestid` is a new package relative to §7.8: it was split
+out to break a potential cycle between `internal/server` and
+`internal/auth` (both need the per-request correlation token). No
+behavioural change — it is the ctx key and a middleware, nothing
+else.
+
+### 11.2 HTTP surface actually shipped (vs. §7.1)
+
+| Endpoint           | Status    | Notes                                                           |
+|--------------------|-----------|-----------------------------------------------------------------|
+| `POST /v1/ask`     | shipped   | JSON + SSE streaming per §7.2. `format` field deferred; see §11.4. |
+| `GET  /v1/tools`   | shipped   | Returns `{tools:[], discovery_deferred:true}`. See §11.5.       |
+| `GET  /v1/models`  | shipped   | Proxies Ollama `/api/tags` through the bridge.                  |
+| `GET  /v1/health`  | shipped   | **Liveness-only.** No upstream probe. See §11.6.                |
+| `GET  /v1/version` | NOT SHIPPED | Build metadata surfaces via `HealthResponse.Version`.         |
+| `GET  /metrics`    | shipped   | On a **separate listener** (loopback by default). See §11.7.    |
+
+### 11.3 System prompt — DEFERRED
+
+§7.4 described a ConfigMap-loaded system prompt constraining the model
+to OpenCost-only questions, refusing off-topic queries, and forbidding
+hallucinated numbers. **This did not ship in v0.1.** The gateway
+forwards the user query to the bridge with a single `role:"user"`
+message and no system frame.
+
+Rationale for the cut: `jonigl/ollama-mcp-bridge` already injects
+tool definitions on every `/api/chat` request, which is the load-
+bearing part of the guardrail. A system prompt without the
+corresponding evaluation harness (out of scope per §5.3) lands as
+unverified LLM-ergonomics prose — worth shipping, but not worth
+blocking the release for. The `internal/prompt` package and its
+ConfigMap wiring are tracked for v0.2.
+
+Operators needing guardrails in v0.1 can pin them client-side by
+prepending a system message to their query text. `docs/prompts.md`
+documents the intended prompt verbatim and the reasoning behind it
+so operators who choose to front-load the guardrail get the same
+text the gateway will ship in v0.2.
+
+### 11.4 `AskRequest.format` — DEFERRED
+
+§7.2 listed a `"format":"text|json"` field for optional
+structured-JSON responses. `pkg/apiv1.AskRequest` does not expose it:
+the gateway ships one markdown-string answer shape. No consumer has
+asked for structured JSON yet, and adding the field speculatively
+would commit the gateway to a schema we would have to maintain
+through v0.x. Reintroduce when the first UI consumer lands.
+
+### 11.5 `/v1/tools` discovery — DEFERRED
+
+§7.1 promised a live list of MCP tools discovered through the bridge.
+`jonigl/ollama-mcp-bridge` does not expose an endpoint for that
+today. Rather than invent one (which would mean forking the bridge),
+the handler returns an empty list with `discovery_deferred:true` so
+clients render "tool discovery not yet supported" instead of
+silently assuming misconfiguration. When the bridge grows a listing
+endpoint, or when the gateway caches tools observed in streaming
+responses, this field goes false and the list populates.
+
+### 11.6 `/v1/health` — liveness only
+
+§7.1 called it "liveness + dependency readiness". The shipped
+endpoint is pure liveness: it returns 200 and the build version
+while the process is up. Readiness (bridge reachable, Ollama up,
+OpenCost MCP answering) belongs on a separate `/v1/ready` endpoint
+so Kubernetes liveness probes — which restart the pod on failure —
+cannot cycle the gateway because an upstream blipped. The Helm
+chart's `livenessProbe` wires `/v1/health`; `readinessProbe` is
+left empty by design (see `deploy/helm/opencost-ai/values.yaml`).
+
+### 11.7 Metrics on a separate listener
+
+§7.6 described `/metrics` on the main listener. It ships on a
+dedicated listener bound to `127.0.0.1:9090` by default
+(`OPENCOST_AI_METRICS_LISTEN_ADDR`). Two reasons:
+
+1. `/metrics` is unauthenticated by design (Prometheus scrapers do
+   not speak bearer tokens), so keeping it off the main listener
+   means the bearer-token gate cannot accidentally protect it or
+   leak through a middleware misconfiguration.
+2. Loopback-default means an operator who forgets to write a
+   NetworkPolicy still does not expose per-caller token counters
+   cluster-wide.
+
+The chart's `ServiceMonitor` template targets the separate metrics
+port (`service.metricsPort`, default 9090) and the chart ships a
+NetworkPolicy that scopes ingress on that port to same-namespace
+pods by default; operators pointing a cross-namespace Prometheus at
+it override `networkPolicy.metricsIngress.allowedFrom`.
+
+### 11.8 Configuration actually exposed (vs. §7.7)
+
+All §7.7 env vars shipped with the documented defaults. One
+addition: `OPENCOST_AI_METRICS_LISTEN_ADDR` (default
+`127.0.0.1:9090`) per §11.7. The `internal/config` package exports
+constant names for every env var so ops docs and tests share the
+same identifiers; see `config/config.go` for the canonical list.
+
+### 11.9 OTLP tracing — DEFERRED
+
+§7.6 listed OTLP tracing as optional-off-by-default. It did not
+ship: there is no OTLP exporter wired into the gateway and no
+`OTEL_*` env var handling. `log/slog` structured logs with the
+per-request ID (`requestid.HeaderName == "X-Request-ID"`) are the
+v0.1 correlation surface; tracing lands when there is a cross-pod
+span to propagate (realistically once the bridge exposes spans).
+
+### 11.10 Dependencies (vs. §7.8 "prefer stdlib")
+
+Three third-party runtime dependencies, each with an import-site
+justification comment:
+
+- `github.com/prometheus/client_golang` — metrics exposition. Used
+  only by `internal/metrics`; the rest of the code base depends on
+  the package's narrow wrapper types, not on Prometheus directly.
+- `github.com/prometheus/client_model` — transitive, needed to read
+  metric values for tests.
+- `golang.org/x/time` — token-bucket primitive under
+  `internal/ratelimit`. Justified inline per `CLAUDE.md`.
+
+No dependencies under `cmd/` or `pkg/apiv1`. Total third-party
+runtime surface on the hot request path: one client for Prometheus
+text exposition and one token-bucket primitive.
+
+### 11.11 LOC budget (vs. CLAUDE.md)
+
+Gateway code (`cmd/` + `internal/` + `pkg/`) fits inside the 2000-
+line CLAUDE.md budget at tag time. The budget is a soft contract —
+CI does not enforce it — so future reviewers should sample
+`git ls-files cmd internal pkg | xargs wc -l` on the PR branch to
+keep the line honest.
+
+### 11.12 Handoff for v0.2
+
+The design above still describes the intended v0.2 surface.
+Concrete items promoted out of §5.3 / resolved during v0.1:
+
+- `internal/prompt` + ConfigMap-driven system prompt (§11.3).
+- `GET /v1/ready` endpoint + upstream-reachability probe (§11.6).
+- `AskRequest.format="json"` when the first UI consumer lands
+  (§11.4).
+- `/v1/tools` discovery once the bridge exposes tool listing
+  (§11.5).
+- OTLP tracing when the bridge emits spans (§11.9).
+- SPIFFE/SPIRE auth to replace static bearer token (§7.3).
+
+None of these block v0.1.0. They are the documented reasons
+someone should expect a v0.2.

@@ -115,6 +115,28 @@ through it before requesting review:
 - Tests are table-driven and live next to the code. Integration
   tests live under `test/integration/` behind a build tag.
 
+## Local hooks
+
+The repo ships client-side hooks under `.githooks/` that mirror the
+CI gates so the most common mistakes are caught before push:
+
+- `pre-commit` rejects commits whose author name is `Claude` /
+  `Anthropic` or whose author email is `noreply@anthropic.com`.
+- `commit-msg` rejects commit messages whose `Signed-off-by:`
+  trailer names a coding-assistant identity.
+
+Opt in once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The CI workflow (`.github/workflows/authorship.yml`) is
+authoritative — the local hooks exist to make the mistake cheap to
+fix (amend locally) instead of expensive (force-push a rewrite).
+An `Assisted-by: Claude Code` trailer is welcome and does not trip
+either check; it supplements the human `Signed-off-by:`.
+
 ## Running locally
 
 v0.1 scaffold is in progress; `docs/dev-setup.md` will land with the

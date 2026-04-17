@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Client-side authorship gate.
+#
+# Mirrors .github/workflows/authorship.yml so the forbidden pattern
+# is caught at `git commit` time on a contributor's machine, not at
+# PR CI time after a push has already published the bad authorship.
+# The CI workflow remains authoritative; this hook exists to make the
+# mistake cheap to fix (amend locally) instead of expensive to fix
+# (force-push a rewrite and explain in the PR).
+#
+# Rejects a commit when any of the following is true for the commit
+# being created:
+#
+#   - author name matches ^(claude|anthropic)$ (case-insensitive)
+#   - author email contains "noreply@anthropic.com"
+#   - any Signed-off-by trailer in the message contains
+#     "noreply@anthropic.com" or starts with "Claude" / "Anthropic"
+#
+# An "Assisted-by:" trailer naming the tool is allowed and expected
+# for coding-assistant sessions; it supplements, not replaces, the
+# human Signed-off-by.
+#
+# Opt in per-clone with:
+#
+#   git config core.hooksPath .githooks
+#
+# (See CONTRIBUTING.md "Local hooks".)
+#
+# Exit 0 to allow the commit, non-zero to reject.
+
+set -euo pipefail
+
+forbidden_name_re='^(claude|anthropic)$'
+forbidden_email_re='noreply@anthropic\.com'
+
+# Author identity for the commit being created. GIT_AUTHOR_* are set
+# by git for the commit hook environment in newer versions, but
+# pre-commit runs before those are exported, so fall back to the
+# configured identity that `git commit` will use by default.
+author_name="${GIT_AUTHOR_NAME:-$(git config user.name || true)}"
+author_email="${GIT_AUTHOR_EMAIL:-$(git config user.email || true)}"
+
+fail=0
+reason=""
+
+if printf '%s' "${author_name}" | grep -Eiq "${forbidden_name_re}"; then
+    reason="author name '${author_name}' matches forbidden pattern (${forbidden_name_re})"
+    fail=1
+elif printf '%s' "${author_email}" | grep -Eiq "${forbidden_email_re}"; then
+    reason="author email '${author_email}' matches forbidden pattern (${forbidden_email_re})"
+    fail=1
+fi
+
+# If a commit message file has already been prepared (e.g. via
+# `git commit -m` path expansion, or `-F`), pre-commit does not see
+# it — that check belongs in commit-msg. We install a sibling
+# commit-msg hook alongside this one for the trailer check; see
+# .githooks/commit-msg.
+
+if [[ "${fail}" -ne 0 ]]; then
+    cat >&2 <<MSG
+pre-commit: authorship gate rejected this commit.
+
+  ${reason}
+
+DCO (CONTRIBUTING.md) requires every commit to be authored and
+Signed-off-by a legal person who can attest to the terms of
+developercertificate.org. A coding-assistant identity
+("Claude", "noreply@anthropic.com") cannot make that attestation.
+
+Fix:
+
+  git config user.name  "Your Name"
+  git config user.email "you@example.com"
+  # then retry the commit; or, for an in-flight amend:
+  git commit --amend --reset-author -s --no-edit
+
+An "Assisted-by: Claude Code" trailer is welcome and does not trip
+this gate; it supplements the human Signed-off-by, it does not
+replace it.
+
+The same check runs in CI (.github/workflows/authorship.yml); this
+hook exists so the mistake is caught before push.
+MSG
+    exit 1
+fi
+
+exit 0

@@ -1,9 +1,11 @@
 # opencost-ai
 
-> **Status: pre-v0.1, not yet usable.**
-> No tagged release, no Helm chart, no runnable gateway binary. The
-> prototype in `legacy/prototype-flask/` is frozen and must not be
-> built. Do not deploy this repository into anything you care about.
+> **Status: v0.1.0.** First tagged release. Gateway binary, Helm
+> chart, and air-gap install flow ship as signed artefacts (cosign +
+> SPDX SBOM + SLSA v1.0 provenance). See `CHANGELOG.md` for the v0.1
+> contract and `docs/architecture.md` §11 for the shipped-vs-spec
+> delta. The prototype in `legacy/prototype-flask/` is frozen and
+> must not be built.
 
 A Kubernetes-native, air-gap-deployable, open-source AI assistant for
 [OpenCost](https://www.opencost.io/). It lets platform and FinOps
@@ -37,41 +39,60 @@ the bridge.
 - Not multi-cluster or federated. One OpenCost instance per
   deployment.
 
-## Architecture and scope
+## Documentation
 
-`docs/architecture.md` is the source of truth for intent, scope, and
-resolved decisions. Read it before making any non-trivial change.
-Relevant sections:
-
-- §2 — teardown of the archived prototype
-- §5 — product thesis and non-goals for v0.1
-- §6 — target architecture
-- §7 — `opencost-ai-gateway` specification
-- §10 — resolved architectural decisions (binding)
+| Doc                          | Purpose                                                              |
+|------------------------------|----------------------------------------------------------------------|
+| `docs/architecture.md`       | Intent, target architecture, resolved decisions. §11 is the delta between the spec and what actually shipped in v0.1. |
+| `docs/api.md`                | Operator-facing HTTP reference for every `/v1` route.                |
+| `docs/prompts.md`            | The intended system prompt and its rationale.                        |
+| `docs/security.md`           | STRIDE threat model and operator audit checklist.                    |
+| `docs/air-gap-install.md`    | End-to-end offline install flow.                                     |
+| `CHANGELOG.md`               | Release-by-release changes.                                          |
+| `SECURITY.md`                | Vulnerability reporting policy.                                      |
 
 If the code diverges from `docs/architecture.md`, the code is wrong;
 if the intent is wrong, update the design doc in the same PR.
 
-## Repository layout (current)
+## Repository layout
 
 ```
 opencost-ai/
 ├── CLAUDE.md                  # instructions for Claude Code sessions
+├── CHANGELOG.md
 ├── LICENSE                    # Apache-2.0
-├── README.md                  # this file
-├── docs/
-│   └── architecture.md        # design of record
-└── legacy/
-    ├── README.md              # why the prototype is frozen
-    └── prototype-flask/       # archived Flask + pexpect prototype
-        ├── docker/
-        │   └── Dockerfile.ollama
-        └── src/
-            └── ollmcp-api-server.py
+├── README.md
+├── cmd/gateway/               # main.go — wire-up only
+├── internal/                  # server, auth, bridge, audit, ratelimit,
+│                              # config, metrics, requestid
+├── pkg/apiv1/                 # exported wire types, no behaviour
+├── deploy/helm/opencost-ai/   # Helm chart: gateway + bridge + ollama
+├── scripts/air-gap/           # ORAS export/push/pull, crane mirror
+├── test/integration/          # gateway integration test
+├── test/airgap/               # iptables egress-block e2e harness
+├── docs/                      # architecture, api, prompts, security, air-gap
+└── legacy/                    # archived Flask + pexpect prototype (do not build)
 ```
 
-The `cmd/`, `internal/`, `pkg/`, `deploy/`, and `test/` trees land in
-subsequent commits as the v0.1 scaffold fills in.
+## Installation
+
+Air-gap clusters: `docs/air-gap-install.md`. Connected clusters:
+
+```sh
+kubectl create namespace opencost-ai
+kubectl label namespace opencost-ai \
+  pod-security.kubernetes.io/enforce=restricted
+
+kubectl -n opencost-ai create secret generic opencost-ai-auth \
+  --from-literal=token="$(openssl rand -hex 32)"
+
+helm install opencost-ai ./deploy/helm/opencost-ai \
+  --namespace opencost-ai \
+  --set gateway.auth.existingSecret=opencost-ai-auth
+```
+
+Verify the image signature and SBOM before deploying — see
+`docs/security.md` §6.
 
 ## License
 
