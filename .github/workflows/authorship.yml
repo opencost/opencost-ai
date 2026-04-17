@@ -108,7 +108,11 @@ jobs:
               reason="author email '${aemail}' matches forbidden pattern"
             elif printf '%s' "${sob}" | grep -Eiq "${forbidden_email_re}"; then
               reason="Signed-off-by contains forbidden email (${forbidden_email_re})"
-            elif printf '%s' "${sob}" | grep -Eiq 'Signed-off-by:[[:space:]]*(Claude|Anthropic)'; then
+            elif printf '%s' "${sob}" | grep -Eiq '^[[:space:]]*(Claude|Anthropic)\b'; then
+              # Each trailer arrives as just the value (key + ': '
+              # are stripped by valueonly=true), so match the value
+              # directly — anchoring on a leading "Signed-off-by:"
+              # prefix would never fire.
               reason="Signed-off-by names a non-human identity"
             fi
 

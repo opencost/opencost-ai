@@ -43,17 +43,22 @@ if [[ "${ORAS_PLAIN_HTTP:-0}" == "1" ]]; then
 fi
 
 mkdir -p "${workdir}"
-# `oras pull` deposits each layer at its recorded filename. We trust
-# the media type annotations over the filename since the filename is
-# operator-controlled at push time.
+# `oras pull` deposits each layer at the filename recorded in the
+# manifest. The push side (scripts/air-gap/oras-push-model.sh)
+# enforces a `.gguf` / `.Modelfile` extension convention, so we can
+# locate the blobs by extension here without re-parsing the
+# manifest. Artefacts pushed by other tooling that drop the
+# convention will not load — flag and exit rather than silently
+# pick the wrong file.
 oras pull "${oras_flags[@]}" --output "${workdir}" "${ref}"
 
 gguf="$(find "${workdir}" -maxdepth 1 -name '*.gguf' -print -quit)"
 modelfile="$(find "${workdir}" -maxdepth 1 -name '*.Modelfile' -print -quit)"
 
 if [[ -z "${gguf}" ]]; then
-  echo "no GGUF found in ${workdir} after oras pull" >&2
-  echo "the artefact at ${ref} may not carry a vnd.ollama.image.model layer" >&2
+  echo "no *.gguf found in ${workdir} after oras pull" >&2
+  echo "the artefact at ${ref} must carry a layer with a .gguf filename" >&2
+  echo "(push artefacts using scripts/air-gap/oras-push-model.sh to enforce this)" >&2
   exit 4
 fi
 

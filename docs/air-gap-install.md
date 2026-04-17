@@ -97,8 +97,9 @@ ORAS at.
 ollama pull qwen2.5:7b-instruct
 
 # 2. Locate the GGUF blob that backs the manifest. Ollama stores blobs
-#    under $HOME/.ollama/models/blobs/ with sha256: prefixed filenames;
-#    the manifest under $HOME/.ollama/models/manifests/ references the
+#    under $HOME/.ollama/models/blobs/ as sha256-<hex> filenames on
+#    disk (the colon from the digest is replaced with a dash); the
+#    manifest under $HOME/.ollama/models/manifests/ references the
 #    layer whose mediaType is application/vnd.ollama.image.model.
 ./scripts/air-gap/export-gguf.sh qwen2.5:7b-instruct ./stage/qwen2.5-7b-instruct.gguf
 
@@ -155,7 +156,10 @@ I know the registry admin did not silently retag?".
 If the staging host cannot reach the internal registry directly (i.e.
 staging is doubly-isolated), replace the single-step copy with a
 two-step `crane pull` → sneakernet tarball → `crane push` flow. The
-script supports this via `--oci-layout` mode; see `--help`.
+script supports this via the `OCI_LAYOUT` and `AIRGAP_LAYOUT_MODE`
+environment variables (`pull` on the connected side, `push` on the
+disconnected side); set `CRANE_INSECURE=1` if the destination
+registry serves plain HTTP.
 
 ## Step 3 — Pre-populate the Ollama PVC
 
@@ -195,9 +199,15 @@ pre-baked CSI snapshots), skip the Job entirely:
 
 ```sh
 # On a helper pod with the Ollama PVC mounted at /var/lib/ollama and
-# the `ollama` binary in PATH (any image based on ollama/ollama works):
-oras pull registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest -o /tmp/model
-ollama create qwen2.5:7b-instruct -f /tmp/model/Modelfile
+# the `ollama` binary in PATH (any image based on ollama/ollama works).
+# The helper script locates the actual `*.Modelfile` filename inside
+# the pulled artefact (the push side preserves the operator-supplied
+# basename) and synthesises one if the artefact has none, so this
+# does not break when the source filename was, say,
+# `qwen2.5-7b-instruct.Modelfile`.
+scripts/air-gap/oras-pull-model.sh \
+  registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest \
+  qwen2.5:7b-instruct
 # Ollama writes the registered model into $HOME/.ollama which HOME is
 # relocated to /var/lib/ollama by the StatefulSet (see
 # deploy/helm/opencost-ai/templates/ollama-statefulset.yaml).
@@ -319,11 +329,14 @@ feature — not a render-only check — and runs in CI on the
 
 The harness:
 
-1. Boots a kind cluster with no default-route container network.
+1. Boots a normal disposable kind cluster (no default-route surgery —
+   the egress block is enforced at the host firewall, not via kind
+   networking).
 2. Stands up an in-cluster `registry:2` attached to the `kind` docker
    network.
 3. Builds the gateway image and pushes it into the in-cluster
-   registry via `crane push`. Optionally (`--mirror-upstream`) also
+   registry via `docker push` (against the registry's
+   `127.0.0.1:5000` bind). Optionally (`--mirror-upstream`) also
    `crane copy`s real upstream `ollama/ollama` and
    `ghcr.io/jonigl/ollama-mcp-bridge` images into the registry to
    exercise the mirror path for the full stack. Also runs

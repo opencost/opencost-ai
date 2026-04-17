@@ -132,9 +132,18 @@ trap cleanup EXIT
 # --- step 1: kind cluster + local registry ------------------------------
 
 echo "==> creating kind cluster ${CLUSTER_NAME}"
+# Honour KIND_NODE_IMAGE when set (the airgap-e2e CI workflow pins it
+# in lockstep with kubeVersion in deploy/helm/opencost-ai/Chart.yaml).
+# Local runs without the env var fall back to whatever kind's default
+# is for the installed kind binary.
+KIND_CREATE_ARGS=()
+if [[ -n "${KIND_NODE_IMAGE:-}" ]]; then
+  KIND_CREATE_ARGS+=(--image "${KIND_NODE_IMAGE}")
+fi
 kind create cluster \
   --name "${CLUSTER_NAME}" \
   --config "${REPO_ROOT}/test/airgap/kind-config.yaml" \
+  "${KIND_CREATE_ARGS[@]}" \
   --wait 120s
 
 echo "==> starting in-cluster registry ${REGISTRY_NAME}:${REGISTRY_PORT}"
@@ -205,6 +214,18 @@ else
   echo "==> oras not installed; skipping ORAS push dry-run (non-fatal)"
 fi
 
+# Pre-load the curl image into kind. The probe pods in step 5 use
+# curlimages/curl:8.10.1; without this preload they would attempt to
+# pull from docker.io AFTER the egress block lands, which the block
+# would reject — turning the assertions into ImagePullBackOff timeouts
+# rather than honest pass/fail signals. `kind load docker-image`
+# imports a host-Docker image into every kind node's containerd
+# image store so subsequent pulls hit the local cache.
+PROBE_IMAGE="curlimages/curl:8.10.1"
+echo "==> preloading probe image ${PROBE_IMAGE} into kind"
+docker pull "${PROBE_IMAGE}"
+kind load docker-image "${PROBE_IMAGE}" --name "${CLUSTER_NAME}"
+
 # --- step 3: apply egress block -----------------------------------------
 
 KIND_BRIDGE="$(docker network inspect kind -f '{{index .Options "com.docker.network.bridge.name"}}' 2>/dev/null || true)"
@@ -255,7 +276,7 @@ echo "==> assertion 1: gateway /v1/health returns status:ok from inside the name
 # In-cluster curl proves the Service + NetworkPolicy ingress wiring,
 # not just pod readiness.
 kubectl -n "${NAMESPACE}" run probe-health \
-  --image=curlimages/curl:8.10.1 \
+  --image="${PROBE_IMAGE}" \
   --restart=Never \
   --image-pull-policy=IfNotPresent \
   --labels=app.kubernetes.io/component=airgap-probe \
@@ -278,7 +299,7 @@ echo ""
 echo "==> assertion 2: internet egress from the namespace is blocked"
 # Load-bearing assertion. Curl must NOT reach the public internet.
 kubectl -n "${NAMESPACE}" run probe-egress \
-  --image=curlimages/curl:8.10.1 \
+  --image="${PROBE_IMAGE}" \
   --restart=Never \
   --image-pull-policy=IfNotPresent \
   --labels=app.kubernetes.io/component=airgap-probe \
@@ -300,7 +321,7 @@ echo "==> assertion 3: in-cluster registry is still reachable (block is scoped)"
 # step 4. Double-check explicitly so a future tightening does not
 # silently turn into a DoS of the registry path.
 kubectl -n "${NAMESPACE}" run probe-registry \
-  --image=curlimages/curl:8.10.1 \
+  --image="${PROBE_IMAGE}" \
   --restart=Never \
   --image-pull-policy=IfNotPresent \
   --labels=app.kubernetes.io/component=airgap-probe \
