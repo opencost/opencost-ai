@@ -1,0 +1,153 @@
+# Air-gap end-to-end CI.
+#
+# This job is the real validation of the feature that justifies the
+# whole project — it stands up a kind cluster, mirrors the gateway
+# image into an in-cluster registry, blocks public-internet egress
+# at the host firewall, and asserts the chart installs and serves
+# traffic without reaching the public internet.
+#
+# Split out from helm.yml because:
+#   1. It runs `iptables` on the runner host (root required). Keeping
+#      it out of helm.yml means a failure in this job does not delay
+#      the normal lint/template gate on a Helm-only PR.
+#   2. It runs for longer than the 2–3 minute helm.yml integration
+#      job — mirror/pull cycles add real wall-clock time.
+#   3. It is gated by path filter on the air-gap surface so an
+#      unrelated PR does not re-run it.
+#
+# The iptables mutation lives for the duration of a job step only and
+# is trapped to clean up on exit; the runner is ephemeral on GitHub-
+# hosted runners, so even a leaked rule would be discarded on job
+# completion.
+
+name: airgap-e2e
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/air-gap-install.md'
+      - 'scripts/air-gap/**'
+      - 'test/airgap/**'
+      - 'deploy/helm/opencost-ai/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/airgap-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/air-gap-install.md'
+      - 'scripts/air-gap/**'
+      - 'test/airgap/**'
+      - 'deploy/helm/opencost-ai/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/airgap-e2e.yml'
+  # Manual trigger lets reviewers re-run the job without pushing an
+  # empty commit, and lets maintainers validate release candidates on
+  # demand before tagging.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: airgap-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v3.16.2
+  KIND_VERSION: v0.24.0
+  KIND_NODE_IMAGE: kindest/node:v1.31.0
+  # crane is pinned for reproducible supply-chain: updates ship
+  # cosign-signed releases that we would validate in a future pass.
+  CRANE_VERSION: v0.20.2
+  # oras is pulled from its signed release tarball. Bump with care —
+  # artifact-type and mediaType layout semantics evolved between
+  # 1.0 and 1.2, and scripts/air-gap/oras-push-model.sh assumes 1.2+.
+  ORAS_VERSION: 1.2.2
+
+jobs:
+  airgap-e2e:
+    name: kind + iptables egress block + gateway-only install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Helm
+        run: |
+          curl -fsSL -o /tmp/helm.tar.gz \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Install crane
+        run: |
+          curl -fsSL -o /tmp/crane.tar.gz \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/crane.tar.gz -C /tmp crane
+          sudo install -m 0755 /tmp/crane /usr/local/bin/crane
+          crane version
+
+      - name: Install oras
+        run: |
+          curl -fsSL -o /tmp/oras.tar.gz \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/oras.tar.gz -C /tmp oras
+          sudo install -m 0755 /tmp/oras /usr/local/bin/oras
+          oras version
+
+      - name: Run air-gap e2e (iptables mode)
+        # `sudo -E` preserves GITHUB_*, PATH, and anything the earlier
+        # steps exported; the harness itself only needs iptables, but
+        # we keep the environment so `docker` (via the runner's
+        # default group) is reachable without extra `sudo`-inside-sudo
+        # trickery.
+        run: sudo -E test/airgap/run.sh
+
+      - name: Dump namespace on failure
+        if: failure()
+        run: |
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai get all || true
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai describe pods || true
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai logs -l app.kubernetes.io/component=gateway --tail=200 || true
+
+      # Explicit cleanup step in addition to the EXIT trap inside
+      # run.sh. Belt-and-braces: a `sudo` process killed mid-trap
+      # could in principle leak iptables rules, and ephemeral
+      # GitHub-hosted runners would discard them anyway, but a
+      # self-hosted runner re-using the same host would not. The
+      # comment tag is the scope of the delete so only our rules
+      # are touched.
+      - name: Force-clean iptables rules (belt-and-braces)
+        if: always()
+        run: |
+          sudo iptables -S DOCKER-USER | grep -- '--comment opencost-ai-airgap-e2e' | \
+            sed 's/^-A /-D /' | \
+            while read -r rule; do
+              # shellcheck disable=SC2086
+              sudo iptables ${rule} || true
+            done
+          sudo iptables -S DOCKER-USER | grep -- '--comment opencost-ai-airgap-e2e' && {
+            echo "iptables rules still present after cleanup" >&2
+            exit 1
+          } || true

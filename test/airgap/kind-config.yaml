@@ -1,0 +1,22 @@
+# kind cluster config for the air-gap harness.
+#
+# Single control-plane node, no workers — the chart's three components
+# are light enough that one node is plenty and keeps image-load time
+# low in CI. Node image pinned in run.sh (env var KIND_NODE_IMAGE) to
+# stay in lockstep with deploy/helm/opencost-ai/Chart.yaml kubeVersion.
+#
+# containerdConfigPatches wires the in-cluster registry so
+# `opencost-ai-registry:5000` resolves from inside kind without going
+# through the public internet.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+        [plugins."io.containerd.grpc.v1.cri".registry.mirrors."opencost-ai-registry:5000"]
+          endpoint = ["http://opencost-ai-registry:5000"]
+nodes:
+  - role: control-plane
+    # extraMounts are intentionally unused: the test avoids host-path
+    # leakage so "it worked on my machine" does not leak into CI.
