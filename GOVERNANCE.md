@@ -99,7 +99,7 @@ Best efforts will be given to respond to new Issues and PRs within 24 hours on w
 
 ### Approving PRs
 
-PRs may be merged only after receiving at least one approvals from committers or maintainers. However, maintainers can sidestep this rule under justifiable circumstances. For example:
+PRs may be merged only after receiving at least one approval from committers or maintainers. However, maintainers can sidestep this rule under justifiable circumstances. For example:
 
 - If a CI tool is broken, may override the tool to still submit the change.
 - Minor typos or fixes for broken tests.

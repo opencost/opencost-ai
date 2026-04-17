@@ -35,6 +35,11 @@ gateway release that ships them, referencing the prompt version tag.
 - Added `.github/branch-protection.md` documenting the exact branch
   protection and tag protection rules a maintainer must apply to
   `develop`, `main`, and `v*` release branches.
+- Retained the existing `CODEOWNERS` file and now reference the
+  `@opencost/opencost-ai-maintainers` GitHub team from it. Creating
+  that team is a post-merge operator step; until it exists,
+  "Require review from Code Owners" on `develop` will match no
+  reviewer and block merges by design.
 
 ## v0.1.0 — 2026-04-17
 

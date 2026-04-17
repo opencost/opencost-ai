@@ -66,7 +66,7 @@ Report at
 
 ## Disclosure policy
 
-For known public security vulnerabilities, we will disclose the
+For known public security vulnerabilities, we will publish a
 disclosure as soon as possible after receiving the report.
 Vulnerabilities discovered for the first time will be disclosed in
 accordance with the following process:

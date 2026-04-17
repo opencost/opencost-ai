@@ -33,8 +33,13 @@ jobs:
       security-events: write
       # Needed to publish results and get a badge (see publish_results below).
       id-token: write
-      # Uncomment the permissions below if installing in a private repository.
-      # contents: read
+      # Needed by actions/checkout to read the repository. A
+      # job-level `permissions:` block replaces the workflow-level
+      # one wholesale, so even though the workflow declares
+      # `read-all` we must re-grant read explicitly here once we
+      # list any write scopes.
+      contents: read
+      # Uncomment if installing in a private repository.
       # actions: read
 
     steps:

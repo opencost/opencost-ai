@@ -80,7 +80,8 @@ jobs:
   # Version metadata + release-branch derivation.
   #
   # Every tag-triggered job below checks out source. In the new branch
-  # model (see docs/branch-model.md, mirrored from upstream opencost's
+  # model (see .github/branch-protection.md and the CHANGELOG
+  # "Governance" entry; mirrored from upstream opencost's
   # develop/release-branch/main layout), `main` holds released
   # pointers and `v<MAJOR>.<MINOR>` holds the source that produced the
   # tag. Checking out a tag's SHA directly would pin the build to a
@@ -158,7 +159,7 @@ jobs:
           # Source from the release branch, not the tag's commit.
           # Fails fast if the branch does not exist, which is the
           # intended gate: a tag outside a release branch is a
-          # process violation (see docs/branch-model.md).
+          # process violation (see .github/branch-protection.md).
           ref: ${{ needs.prepare.outputs.release_branch }}
 
       - name: Set up QEMU
