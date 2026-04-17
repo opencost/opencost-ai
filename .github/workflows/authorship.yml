@@ -1,0 +1,159 @@
+# Authorship hygiene gate.
+#
+# We have repeatedly landed commits authored by "Claude <noreply@
+# anthropic.com>" when a coding-assistant session committed directly
+# rather than staging work for the human maintainer to commit. DCO
+# sign-off from a non-human identity is not a valid Developer
+# Certificate of Origin assertion, and a CNCF project cannot accept
+# it — the signer must be a legal person who can attest to the terms
+# of developercertificate.org.
+#
+# This workflow fails the build on:
+#
+#   - any commit whose Author name is "Claude" or whose Author email
+#     is "noreply@anthropic.com";
+#   - any commit body whose "Signed-off-by:" trailer names "Claude"
+#     or "noreply@anthropic.com".
+#
+# The Committer field is deliberately not checked: it is legitimate
+# for a session to commit on behalf of the human (committer=assistant,
+# author=human) — that is the supported pattern documented in
+# CONTRIBUTING.md. The author + DCO sign-off is what the project
+# relies on for legal attribution, and that is what this gate
+# enforces.
+#
+# An "Assisted-by:" trailer naming the tool is welcome (per the Linux
+# kernel convention referenced in CONTRIBUTING.md) and is not
+# rejected — it supplements the human sign-off rather than replacing
+# it.
+#
+# Scope: every commit in the PR range for pull_request events;
+# HEAD~10..HEAD for pushes to main (a pragmatic window that covers
+# the usual merge batch without scanning the entire history on every
+# push).
+
+name: authorship
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authorship-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authorship:
+    name: reject assistant authorship + DCO sign-off
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Need enough history to walk the PR range or the last few
+          # commits on main. fetch-depth: 0 keeps the check simple;
+          # the repo is small enough that the cost is negligible.
+          fetch-depth: 0
+
+      - name: Compute commit range
+        id: range
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+            range="${base}..${head}"
+          else
+            # Push to main. Check the last 10 commits — covers a merge
+            # batch without walking the entire history. Adjust if we
+            # ever land batches that exceed this window.
+            range="HEAD~10..HEAD"
+          fi
+          echo "range=${range}" >> "${GITHUB_OUTPUT}"
+          echo "will check range: ${range}"
+
+      - name: Reject forbidden authorship
+        run: |
+          set -euo pipefail
+
+          range="${{ steps.range.outputs.range }}"
+
+          # Forbidden substrings on Author (%an for name, %ae for
+          # email) and on Signed-off-by trailers in the body (%b).
+          # Match case-insensitively so "claude" and "CLAUDE" both
+          # trip. Keep the list small and explicit — a generic
+          # "reject any bot email" rule would false-positive on
+          # GitHub's merge bot on squash PRs.
+          forbidden_name_re='^(claude|anthropic)$'
+          forbidden_email_re='noreply@anthropic\.com'
+
+          fail=0
+
+          # Use NUL-separated commit records so a stray newline in a
+          # body cannot split a record. Format:
+          #   %H    commit SHA
+          #   %an   author name
+          #   %ae   author email
+          #   %(trailers:key=Signed-off-by,separator=%x0a) one line per trailer
+          while IFS=$'\x1f' read -r -d $'\x00' sha aname aemail sob; do
+            reason=""
+            if printf '%s' "${aname}" | grep -Eiq "${forbidden_name_re}"; then
+              reason="author name '${aname}' matches forbidden pattern"
+            elif printf '%s' "${aemail}" | grep -Eiq "${forbidden_email_re}"; then
+              reason="author email '${aemail}' matches forbidden pattern"
+            elif printf '%s' "${sob}" | grep -Eiq "${forbidden_email_re}"; then
+              reason="Signed-off-by contains forbidden email (${forbidden_email_re})"
+            elif printf '%s' "${sob}" | grep -Eiq '^[[:space:]]*(Claude|Anthropic)\b'; then
+              # Each trailer arrives as just the value (key + ': '
+              # are stripped by valueonly=true), so match the value
+              # directly — anchoring on a leading "Signed-off-by:"
+              # prefix would never fire.
+              reason="Signed-off-by names a non-human identity"
+            fi
+
+            if [[ -n "${reason}" ]]; then
+              printf '::error::commit %s: %s\n' "${sha}" "${reason}"
+              printf '    author: %s <%s>\n' "${aname}" "${aemail}"
+              if [[ -n "${sob}" ]]; then
+                printf '    Signed-off-by trailers:\n'
+                printf '%s\n' "${sob}" | sed 's/^/      /'
+              else
+                printf '    Signed-off-by trailers: <none>\n'
+              fi
+              fail=1
+            fi
+          done < <(git log --format=$'%H\x1f%an\x1f%ae\x1f%(trailers:key=Signed-off-by,valueonly=true)%x00' "${range}")
+
+          if [[ "${fail}" -ne 0 ]]; then
+            cat >&2 <<'MSG'
+
+          One or more commits in this range fail the authorship gate.
+
+          DCO (CONTRIBUTING.md) requires that every commit be
+          Signed-off-by a legal person who can attest to the terms of
+          developercertificate.org. A coding-assistant identity
+          ("Claude", "noreply@anthropic.com") cannot make that
+          attestation.
+
+          Fix:
+
+            # Rewrite the offending commits with your identity as
+            # author and a real Signed-off-by line. For a single
+            # commit at HEAD:
+            git commit --amend --reset-author -s --no-edit
+
+            # For older commits, use interactive rebase with
+            # `exec git commit --amend --reset-author -s --no-edit`.
+
+          Assisted-by: trailers naming the tool are welcome and do
+          not trip this gate.
+          MSG
+            exit 1
+          fi
+
+          echo "authorship gate passed for range ${range}"

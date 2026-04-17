@@ -1,0 +1,248 @@
+# Air-gap end-to-end CI.
+#
+# This job is the real validation of the feature that justifies the
+# whole project — it stands up a kind cluster, mirrors the gateway
+# image into an in-cluster registry, blocks public-internet egress
+# at the host firewall, and asserts the chart installs and serves
+# traffic without reaching the public internet.
+#
+# Split out from helm.yml because:
+#   1. It runs `iptables` on the runner host (root required). Keeping
+#      it out of helm.yml means a failure in this job does not delay
+#      the normal lint/template gate on a Helm-only PR.
+#   2. It runs for longer than the 2–3 minute helm.yml integration
+#      job — mirror/pull cycles add real wall-clock time.
+#   3. It is gated by path filter on the air-gap surface so an
+#      unrelated PR does not re-run it.
+#
+# The iptables mutation lives for the duration of a job step only and
+# is trapped to clean up on exit; the runner is ephemeral on GitHub-
+# hosted runners, so even a leaked rule would be discarded on job
+# completion.
+
+name: airgap-e2e
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/air-gap-install.md'
+      - 'scripts/air-gap/**'
+      - 'test/airgap/**'
+      - 'deploy/helm/opencost-ai/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/airgap-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/air-gap-install.md'
+      - 'scripts/air-gap/**'
+      - 'test/airgap/**'
+      - 'deploy/helm/opencost-ai/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/airgap-e2e.yml'
+  # Manual trigger lets reviewers re-run the job without pushing an
+  # empty commit, and lets maintainers validate release candidates on
+  # demand before tagging.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: airgap-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v3.16.2
+  KIND_VERSION: v0.24.0
+  KIND_NODE_IMAGE: kindest/node:v1.31.0
+  KUBECTL_VERSION: v1.31.0
+  # crane is pinned for reproducible supply-chain: updates ship
+  # cosign-signed releases that we would validate in a future pass.
+  CRANE_VERSION: v0.20.2
+  # oras is pulled from its signed release tarball. Bump with care —
+  # artifact-type and mediaType layout semantics evolved between
+  # 1.0 and 1.2, and scripts/air-gap/oras-push-model.sh assumes 1.2+.
+  ORAS_VERSION: 1.2.2
+
+jobs:
+  airgap-e2e:
+    name: kind + iptables egress block + gateway-only install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Supply-chain note: every binary fetched below is verified
+      # against the SHA256 published alongside the release. The check
+      # relies on the release CDN serving a truthful checksum file,
+      # so a full compromise of the CDN still lands a bad binary —
+      # a follow-up will pin exact digests inline. What this catches
+      # today is accidental corruption in transit and opportunistic
+      # mirror poisoning that modifies only the binary.
+
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/helm.tar.gz \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o /tmp/helm.tar.gz.sha256 \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          # get.helm.sh's .sha256sum file names the upstream filename
+          # ("helm-v3.16.2-linux-amd64.tar.gz"), but we saved the
+          # tarball as helm.tar.gz. Rewrite the filename in the sum
+          # line so `sha256sum -c` looks at the file we actually have.
+          sed "s/helm-${HELM_VERSION}-linux-amd64.tar.gz\$/helm.tar.gz/" \
+            /tmp/helm.tar.gz.sha256 > /tmp/helm.sha256sum
+          ( cd /tmp && sha256sum -c helm.sha256sum )
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kind
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSL -o /tmp/kind.sha256 \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          # kind publishes the sha as a bare hex string without the
+          # filename suffix that sha256sum -c expects, so normalise
+          # before checking.
+          printf '%s  kind\n' "$(awk '{print $1}' /tmp/kind.sha256)" > /tmp/kind.sha256sum
+          ( cd /tmp && sha256sum -c kind.sha256sum )
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      # Ubuntu 24.04 hosted runners do ship kubectl, but the binary
+      # path varies by image revision and is not always in sudo's
+      # secure_path. Install our own pinned copy at /usr/local/bin
+      # so `sudo` finds it deterministically and the version
+      # matches KIND_NODE_IMAGE's Kubernetes line.
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          # kubectl.sha256 is a bare hex string — construct a line
+          # sha256sum -c can consume.
+          printf '%s  kubectl\n' "$(cat /tmp/kubectl.sha256)" > /tmp/kubectl.sha256sum
+          ( cd /tmp && sha256sum -c kubectl.sha256sum )
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/crane.tar.gz \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o /tmp/crane.checksums.txt \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/checksums.txt"
+          # Filter the multi-binary checksums file to just the
+          # artefact we downloaded, then verify.
+          grep 'go-containerregistry_Linux_x86_64.tar.gz$' /tmp/crane.checksums.txt \
+            | sed 's/go-containerregistry_Linux_x86_64.tar.gz$/crane.tar.gz/' \
+            > /tmp/crane.sha256sum
+          ( cd /tmp && sha256sum -c crane.sha256sum )
+          tar -xzf /tmp/crane.tar.gz -C /tmp crane
+          sudo install -m 0755 /tmp/crane /usr/local/bin/crane
+          crane version
+
+      - name: Install oras
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/oras.tar.gz \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/oras.checksums.txt \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt"
+          grep "oras_${ORAS_VERSION}_linux_amd64.tar.gz$" /tmp/oras.checksums.txt \
+            | sed "s/oras_${ORAS_VERSION}_linux_amd64.tar.gz$/oras.tar.gz/" \
+            > /tmp/oras.sha256sum
+          ( cd /tmp && sha256sum -c oras.sha256sum )
+          tar -xzf /tmp/oras.tar.gz -C /tmp oras
+          sudo install -m 0755 /tmp/oras /usr/local/bin/oras
+          oras version
+
+      - name: Tool versions (debug)
+        # Last seen in CI: harness exited 2 in the first run with no
+        # visible context. Print every binary's version BEFORE the
+        # harness runs so the next failure carries enough state in
+        # the log to diagnose without re-running. Cheap (<1s) and
+        # always-on; remove once the harness is stable for ~10 runs.
+        run: |
+          set -x
+          uname -a
+          docker version
+          docker info | head -40
+          kind version
+          kubectl version --client
+          helm version --short
+          crane version
+          oras version
+          which iptables
+          sudo iptables --version
+
+      - name: Run air-gap e2e (iptables mode)
+        # `sudo -E` preserves GITHUB_*, PATH, and anything the earlier
+        # steps exported; the harness itself only needs iptables, but
+        # we keep the environment so `docker` (via the runner's
+        # default group) is reachable without extra `sudo`-inside-sudo
+        # trickery.
+        #
+        # No `bash -x`: the harness creates a Kubernetes Secret with
+        # `--from-literal=token=…`, and xtrace would echo that token
+        # value into the public CI log. The script itself sets an
+        # ERR trap that prints file:line on any unhandled failure
+        # and emits explicit `==>` step markers, which is enough for
+        # diagnosis without the secret-leak risk.
+        run: sudo -E bash test/airgap/run.sh
+
+      - name: Dump namespace on failure
+        if: failure()
+        run: |
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai get all || true
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai describe pods || true
+          sudo kubectl --kubeconfig=/root/.kube/config -n opencost-ai logs -l app.kubernetes.io/component=gateway --tail=200 || true
+
+      # Explicit cleanup step in addition to the EXIT trap inside
+      # run.sh. Belt-and-braces: a `sudo` process killed mid-trap
+      # could in principle leak iptables rules, and ephemeral
+      # GitHub-hosted runners would discard them anyway, but a
+      # self-hosted runner re-using the same host would not. The
+      # comment tag is the scope of the delete so only our rules
+      # are touched.
+      - name: Force-clean iptables/ip6tables rules (belt-and-braces)
+        if: always()
+        run: |
+          # Cover both address families because the kind docker
+          # network is dual-stack on hosted runners and the harness
+          # applies rules to both ip4 and ip6 DOCKER-USER chains.
+          for ipt in iptables ip6tables; do
+            sudo "${ipt}" -S DOCKER-USER 2>/dev/null \
+              | grep -- '--comment opencost-ai-airgap-e2e' \
+              | sed 's/^-A /-D /' \
+              | while read -r rule; do
+                  # shellcheck disable=SC2086
+                  sudo "${ipt}" ${rule} || true
+                done
+            if sudo "${ipt}" -S DOCKER-USER 2>/dev/null \
+                 | grep -- '--comment opencost-ai-airgap-e2e' >/dev/null; then
+              echo "${ipt} rules still present after cleanup" >&2
+              exit 1
+            fi
+          done

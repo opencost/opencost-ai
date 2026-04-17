@@ -1,0 +1,59 @@
+# Air-gap e2e values used by test/airgap/run.sh and the airgap-e2e
+# CI workflow.
+#
+# Only the gateway is enabled. The harness's load-bearing assertions
+# are that:
+#
+#   - images pulled from the in-cluster registry succeed (proves the
+#     mirror / image.repository override path end-to-end),
+#   - pod egress to the public internet is blocked at the host
+#     firewall via iptables on DOCKER-USER (this is what the harness
+#     actually exercises), and
+#   - /v1/health serves 200 (proves the gateway image runs under
+#     PodSecurity restricted + read-only rootfs with the mirrored
+#     image tag).
+#
+# Note on NetworkPolicy enforcement: kind's default CNI (kindnet)
+# does NOT enforce NetworkPolicy. The chart's NetworkPolicies render
+# under this profile so a template-shape regression is caught, but
+# their enforcement is not validated here. NP enforcement testing
+# requires a Calico/Cilium-on-kind variant and lives in a follow-up
+# job. Do not weaken the iptables-based egress assertion on the
+# assumption that the NP is doing the work in this harness.
+#
+# A full bridge + ollama stack requires a responding MCP backend and
+# ~GB of model weights to exercise honestly; that is the job of a
+# separate nightly workflow running with larger runners. The
+# gateway-only profile here matches
+# deploy/helm/opencost-ai/ci/integration-values.yaml in shape so a
+# template-rendering regression surfaces in both jobs.
+
+imagePullSecrets: []
+
+gateway:
+  image:
+    # Populated at runtime by run.sh after `docker push` into
+    # opencost-ai-registry:5000/... — the harness proves the pull
+    # path by booting a pod against this reference under an egress
+    # block that disallows anything else.
+    repository: opencost-ai-registry:5000/opencost-ai-gateway
+    tag: airgap-e2e
+    pullPolicy: IfNotPresent
+  auth:
+    # Harness writes the Secret (opencost-ai-auth) before helm install;
+    # the Deployment mounts it as optional:true so an install without
+    # the Secret does not error out — the harness always supplies one,
+    # but the optional mount is the documented production contract and
+    # we exercise it rather than a stricter test-only variant.
+    existingSecret: opencost-ai-auth
+
+bridge:
+  enabled: false
+ollama:
+  enabled: false
+
+networkPolicy:
+  # Must remain enabled. The test's load-bearing assertion is that
+  # pod egress is constrained; flipping this off would invalidate the
+  # entire run.
+  enabled: true
