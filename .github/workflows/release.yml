@@ -205,7 +205,7 @@ jobs:
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.6.0    # TODO: resolve to SHA before first release
+        uses: sigstore/cosign-installer@v4.1.1    # TODO: resolve to SHA before first release
         with:
           cosign-release: v2.4.1
 
