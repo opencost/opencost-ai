@@ -1,0 +1,243 @@
+# Helm-chart CI for opencost-ai.
+#
+# Two jobs:
+#
+#   - `lint` runs `helm lint` over the default values and
+#     `helm lint --strict` over ci/lint-values.yaml (which enables
+#     every optional feature), plus `helm template` for three value
+#     profiles. --strict is reserved for the optional-feature profile
+#     so a noisy INFO from an unused branch in the default path does
+#     not break the release gate. Catches templating errors, invalid
+#     YAML, and missing `required` fields before a release PR even
+#     gets reviewed.
+#
+#   - `integration` stands up a kind cluster, builds the gateway image
+#     from the in-tree Dockerfile, loads it into kind, installs the
+#     chart with ci/integration-values.yaml (gateway only), and
+#     validates /v1/health over a port-forward. This is the smallest
+#     end-to-end assertion the chart can make without shipping Ollama
+#     and model weights into the CI runner.
+#
+# Kept in a separate workflow file from ci.yml so a Helm-only PR
+# (e.g. a values tweak) does not re-run the full Go test matrix, and
+# vice versa.
+
+name: helm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/helm/**'
+      - '.github/workflows/helm.yml'
+      - 'Dockerfile'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/helm/**'
+      - '.github/workflows/helm.yml'
+      - 'Dockerfile'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin Helm and kind to known-good releases. Bump together with the
+  # chart kubeVersion in Chart.yaml so the tooling keeps pace with the
+  # supported control-plane line.
+  HELM_VERSION: v3.16.2
+  KIND_VERSION: v0.24.0
+  # Node image pinned by digest-bearing tag so the runner always pulls
+  # the same Kubernetes bits. Bump in lockstep with chart kubeVersion.
+  KIND_NODE_IMAGE: kindest/node:v1.31.0
+
+jobs:
+  lint:
+    name: helm lint + template
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Helm and kind are installed inline rather than via third-party
+      # actions. We would ordinarily pin the action to a digest per the
+      # OpenSSF practice used in ci.yml; until someone looks up the
+      # right digest for `azure/setup-helm` and `helm/kind-action` and
+      # validates it off a trusted source, installing from the upstream
+      # release tarball keeps the supply-chain story in the project's
+      # hands. The tarball is verified by tag version only here; a
+      # follow-up should switch to a cosign-verified download.
+      - name: Install Helm
+        run: |
+          curl -fsSL -o /tmp/helm.tar.gz \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: helm lint (default values)
+        run: helm lint deploy/helm/opencost-ai
+
+      - name: helm lint (strict, all features enabled)
+        run: |
+          helm lint --strict \
+            --values deploy/helm/opencost-ai/ci/lint-values.yaml \
+            deploy/helm/opencost-ai
+
+      # `helm template` with `--validate` requires a reachable
+      # apiserver; without one it still catches template-level errors
+      # (undefined variables, bad indentation, missing `required`).
+      # That is what we want here — schema validation against a live
+      # cluster happens in the integration job.
+      - name: helm template (default values)
+        run: helm template release-name deploy/helm/opencost-ai > /tmp/default.yaml
+
+      - name: helm template (all features enabled)
+        run: |
+          helm template release-name deploy/helm/opencost-ai \
+            --values deploy/helm/opencost-ai/ci/lint-values.yaml \
+            > /tmp/all-features.yaml
+
+      - name: helm template (integration values, gateway-only)
+        run: |
+          helm template release-name deploy/helm/opencost-ai \
+            --values deploy/helm/opencost-ai/ci/integration-values.yaml \
+            > /tmp/integration.yaml
+
+      - name: Upload rendered manifests
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.1
+        with:
+          name: helm-rendered-manifests
+          path: |
+            /tmp/default.yaml
+            /tmp/all-features.yaml
+            /tmp/integration.yaml
+          if-no-files-found: error
+          retention-days: 7
+
+  integration:
+    name: kind + helm install + /v1/health
+    runs-on: ubuntu-24.04
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Helm
+        run: |
+          curl -fsSL -o /tmp/helm.tar.gz \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/helm.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster \
+            --name opencost-ai-int \
+            --image "${KIND_NODE_IMAGE}" \
+            --wait 120s
+          kubectl cluster-info --context kind-opencost-ai-int
+
+      - name: Build gateway image for kind
+        run: |
+          docker build \
+            --build-arg VERSION=ci-integration \
+            --build-arg REVISION=${{ github.sha }} \
+            -t opencost-ai-gateway:ci-integration \
+            -f Dockerfile \
+            .
+
+      - name: Load image into kind
+        run: kind load docker-image opencost-ai-gateway:ci-integration --name opencost-ai-int
+
+      - name: Create test namespace
+        run: |
+          kubectl create namespace opencost-ai
+          # PodSecurity "restricted" is the documented target profile;
+          # labelling the namespace proves the chart's security context
+          # is actually compliant, not just aspirational.
+          kubectl label namespace opencost-ai \
+            pod-security.kubernetes.io/enforce=restricted \
+            pod-security.kubernetes.io/audit=restricted \
+            pod-security.kubernetes.io/warn=restricted
+
+      - name: helm install (gateway only)
+        run: |
+          helm install opencost-ai deploy/helm/opencost-ai \
+            --namespace opencost-ai \
+            --values deploy/helm/opencost-ai/ci/integration-values.yaml \
+            --wait --timeout 3m
+
+      - name: Describe workloads on failure
+        if: failure()
+        run: |
+          kubectl -n opencost-ai get all
+          kubectl -n opencost-ai describe pods
+          kubectl -n opencost-ai logs -l app.kubernetes.io/component=gateway --tail=200 || true
+
+      # Port-forward + probe + assertions all in one step: a
+      # backgrounded kubectl port-forward started in step N does not
+      # reliably survive into step N+1 on GitHub runners, so we keep
+      # the forwarder's lifetime inside one shell session and trap its
+      # teardown on exit.
+      - name: Port-forward and assert /v1/health
+        run: |
+          set -euo pipefail
+          kubectl -n opencost-ai port-forward svc/opencost-ai-gateway 8080:8080 &
+          pf_pid=$!
+          trap 'kill "${pf_pid}" 2>/dev/null || true' EXIT
+
+          # Wait for the forwarder to establish. Up to 30s; fail loudly
+          # rather than race the first curl.
+          body=""
+          for i in $(seq 1 30); do
+            if body=$(curl -fsS http://127.0.0.1:8080/v1/health 2>/dev/null); then
+              echo "port-forward up after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "${body}" ]; then
+            echo "port-forward did not become ready within 30s" >&2
+            exit 1
+          fi
+
+          echo "health response: ${body}"
+          echo "${body}" | grep -q '"status":"ok"'
+          echo "${body}" | grep -q '"version"'
+
+      - name: Assert NetworkPolicies match enabled components
+        run: |
+          # Gate on name, not just count, so a future rename is caught.
+          kubectl -n opencost-ai get networkpolicy opencost-ai-gateway
+          # Bridge and Ollama are disabled in integration values;
+          # their NetworkPolicies must not exist.
+          for np in opencost-ai-bridge opencost-ai-ollama; do
+            if kubectl -n opencost-ai get networkpolicy "${np}" 2>/dev/null; then
+              echo "unexpected NetworkPolicy ${np} rendered when component disabled" >&2
+              exit 1
+            fi
+          done

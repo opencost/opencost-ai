@@ -1,0 +1,59 @@
+Thank you for installing {{ .Chart.Name }}-{{ .Chart.Version }}.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+{{- if .Values.gateway.enabled }}
+
+The opencost-ai gateway is reachable in-cluster at:
+
+  http://{{ include "opencost-ai.gateway.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.gateway.service.port }}
+
+Port-forward from your workstation:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward \
+    svc/{{ include "opencost-ai.gateway.fullname" . }} \
+    {{ .Values.gateway.service.port }}:{{ .Values.gateway.service.port }}
+
+Then verify liveness:
+
+  curl -sS http://127.0.0.1:{{ .Values.gateway.service.port }}/v1/health
+
+The /v1/ask, /v1/tools, and /v1/models endpoints require a bearer
+token. Supply it via the Authorization header:
+
+  curl -sS -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d '{"query":"what did i spend yesterday?"}' \
+       http://127.0.0.1:{{ .Values.gateway.service.port }}/v1/ask
+
+{{- if and (not .Values.gateway.auth.existingSecret) (not .Values.gateway.auth.create) }}
+
+WARNING: no bearer-token Secret is wired up (gateway.auth.existingSecret
+is empty and gateway.auth.create is false). The /v1/ask endpoint will
+reject every request until you either:
+
+  helm upgrade ... --set gateway.auth.existingSecret=my-secret
+  or
+  helm upgrade ... --set gateway.auth.create=true \
+                   --set gateway.auth.token="$(openssl rand -hex 32)"
+{{- end }}
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicies are enabled. Egress from every component is restricted
+to the minimum required topology:
+
+  gateway -> bridge
+  bridge  -> ollama + {{ .Values.bridge.opencostMcp.host }}:{{ .Values.bridge.opencostMcp.port }}
+  ollama  -> (no egress beyond kube-dns)
+
+If inter-pod traffic fails after install, verify your CNI enforces
+NetworkPolicy (Calico, Cilium, Antrea). Flannel without an overlay
+ignores these policies.
+{{- end }}
+
+For air-gap install guidance, see:
+  deploy/helm/opencost-ai/README.md
+  docs/architecture.md §7.5 (security) and §9 (air-gap delivery)

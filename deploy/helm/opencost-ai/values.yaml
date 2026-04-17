@@ -1,0 +1,352 @@
+# Default values for opencost-ai.
+#
+# Every toggle here is documented. The chart is deliberately flat (one
+# chart, three components via template conditionals) rather than
+# subcharts, so every operator-visible knob lives in this file.
+#
+# Security defaults (non-negotiable — see CLAUDE.md):
+#   - All pods run as UID 65532 with readOnlyRootFilesystem: true.
+#   - NetworkPolicies restrict egress to the minimum topology:
+#       gateway -> bridge
+#       bridge  -> ollama, opencost-mcp
+#       ollama  -> (nothing except kube-dns)
+#     No component is granted internet egress.
+#   - podSecurity.restricted is the intended profile; the chart expects
+#     the target namespace to be labelled
+#       pod-security.kubernetes.io/enforce=restricted
+#     See README.md.
+
+# nameOverride / fullnameOverride follow standard Helm conventions and
+# feed the templates' name helpers.
+nameOverride: ""
+fullnameOverride: ""
+
+# Extra labels applied to every rendered resource. Useful for cost-
+# allocation labels (e.g. opencost.io/team) or multi-tenant tagging.
+commonLabels: {}
+
+# --- image pull secrets --------------------------------------------------
+# Air-gap clusters typically pull from an internal registry with
+# credentials. List pre-created imagePullSecret names here.
+imagePullSecrets: []
+#  - name: internal-registry
+
+# --- gateway -------------------------------------------------------------
+gateway:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/opencost/opencost-ai-gateway
+    # Empty tag falls back to .Chart.AppVersion so the chart and the
+    # binary version track together unless explicitly overridden.
+    tag: ""
+    pullPolicy: IfNotPresent
+    # Pin by digest for reproducible air-gap deployments. Leave blank
+    # to use `tag` above. When set, the image reference becomes
+    # repository@digest and `tag` is ignored.
+    digest: ""
+
+  service:
+    type: ClusterIP
+    port: 8080
+    metricsPort: 9090
+    # annotations apply to the Service only. Use
+    # podAnnotations below for Pod-level annotations.
+    annotations: {}
+
+  # Environment configuration maps 1:1 to docs/architecture.md §7.7.
+  config:
+    # OPENCOST_AI_DEFAULT_MODEL. The README lists the VRAM floor for
+    # each supported value (qwen2.5:7b-instruct is the documented
+    # default; mistral-nemo:12b and llama3.1:8b-instruct are supported
+    # overrides).
+    defaultModel: "qwen2.5:7b-instruct"
+    # OPENCOST_AI_REQUEST_TIMEOUT — per-request deadline.
+    requestTimeout: "120s"
+    # OPENCOST_AI_MAX_REQUEST_BYTES — envelope ceiling.
+    maxRequestBytes: 8192
+    # OPENCOST_AI_RATE_LIMIT_PER_MIN — <=0 disables.
+    rateLimitPerMin: 60
+    # OPENCOST_AI_AUDIT_LOG_QUERY — leave false unless a deployment
+    # explicitly needs query text captured for debugging. This is the
+    # one knob that crosses the "never log query text by default"
+    # non-negotiable and must remain off by default.
+    auditLogQuery: false
+
+  # Bearer-token secret wiring. The gateway loads its auth token from a
+  # file mounted at /var/run/secrets/opencost-ai/token. The chart does
+  # NOT generate a token — per CLAUDE.md non-negotiables, secret
+  # material must never be committed or rendered into a chart.
+  # Either:
+  #   a) reference a pre-created Secret via existingSecret, or
+  #   b) set create: true AND pass --set gateway.auth.token=<value> on
+  #      install, so the raw token is supplied at install time (never
+  #      stored in a values.yaml committed to a repo).
+  auth:
+    # If existingSecret is set, the chart wires the Deployment to mount
+    # that Secret and ignores the other fields below.
+    existingSecret: ""
+    # Key inside the Secret whose value is the raw token text.
+    secretKey: "token"
+    # When true and existingSecret is empty, the chart renders a Secret
+    # named "<gateway-fullname>-auth" (usually "<release>-gateway-auth"
+    # when release name and chart name do not overlap; see the
+    # opencost-ai.gateway.authSecretName helper for the exact rule).
+    # The token value MUST be supplied at install time via
+    # --set gateway.auth.token=... — there is no default.
+    create: false
+    token: ""
+
+  # Standard Kubernetes pod knobs.
+  podAnnotations: {}
+  podLabels: {}
+
+  # PodSecurityContext (pod-level) and securityContext (container-level)
+  # are set to PodSecurity "restricted"-compliant defaults. Do not relax
+  # these without an architectural review.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
+  # /v1/health is liveness-only per apiv1.HealthResponse: it returns
+  # 200 regardless of whether the bridge upstream is reachable. Using
+  # it as a readinessProbe would route traffic to pods whose bridge
+  # dependency is down, which defeats the purpose of readiness. The
+  # chart ships no readiness default until /v1/ready lands; operators
+  # who want a stand-in can override readinessProbe in values.
+  livenessProbe:
+    httpGet:
+      path: /v1/health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readinessProbe: {}
+
+  # ServiceMonitor for Prometheus Operator users. Gated on enabled so
+  # clusters without the CRD don't trip helm validation on install.
+  serviceMonitor:
+    enabled: false
+    # namespace defaults to the release namespace; override to put the
+    # ServiceMonitor in the monitoring namespace if Prometheus Operator
+    # is scoped there.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+
+# --- bridge (jonigl/ollama-mcp-bridge) ----------------------------------
+bridge:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/jonigl/ollama-mcp-bridge
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    digest: ""
+
+  service:
+    type: ClusterIP
+    port: 8000
+    annotations: {}
+
+  # OpenCost MCP endpoint. Must resolve in-cluster. Defaults match the
+  # upstream OpenCost Helm chart's service name and the MCP port
+  # introduced in OpenCost v1.118.
+  opencostMcp:
+    # host:port the bridge talks to via streamable_http (see
+    # docs/architecture.md §10 decision 1). The service DNS name is
+    # relative to the bridge Pod's namespace; include the namespace
+    # explicitly when OpenCost is installed elsewhere.
+    host: "opencost.opencost.svc.cluster.local"
+    port: 8081
+    # Label selector fragments for the NetworkPolicy egress rule to the
+    # OpenCost pod. These must match the labels applied by the OpenCost
+    # chart; verify before deploying in a real cluster.
+    namespaceSelectorLabel:
+      # Kubernetes injects kubernetes.io/metadata.name on every
+      # namespace since 1.22, so the NP matches the OpenCost namespace
+      # without the user having to add a custom label.
+      key: kubernetes.io/metadata.name
+      value: opencost
+    podSelector:
+      app.kubernetes.io/name: opencost
+
+  podAnnotations: {}
+  podLabels: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- ollama -------------------------------------------------------------
+ollama:
+  enabled: true
+  # Single replica: Ollama's on-disk model cache is bound to a PVC and
+  # concurrent writers are unsupported. Scale up by deploying multiple
+  # releases with dedicated PVCs, not by bumping this.
+  replicaCount: 1
+
+  image:
+    repository: ollama/ollama
+    tag: "0.6.0"
+    pullPolicy: IfNotPresent
+    digest: ""
+
+  service:
+    type: ClusterIP
+    port: 11434
+    annotations: {}
+
+  # PVC for the model cache. Models can be multiple GB; sizing here is
+  # for a single 7B-Q4 model plus overhead. Override for larger models
+  # or multi-model deployments.
+  persistence:
+    enabled: true
+    # storageClassName "" uses the cluster default; air-gap clusters
+    # typically have a specific SC name — set it explicitly.
+    storageClassName: ""
+    size: 20Gi
+    accessModes:
+      - ReadWriteOnce
+    # When false, the chart falls back to an emptyDir scratch volume.
+    # Intended only for ephemeral CI runs — model weights are lost on
+    # pod restart.
+
+  podAnnotations: {}
+  podLabels: {}
+
+  # Root filesystem is read-only; Ollama writes model state to the
+  # PVC mounted at /var/lib/ollama (HOME is overridden to that path,
+  # so the default ~/.ollama cache lands on the PVC) and uses an
+  # emptyDir at /tmp for scratch — backed by node storage, not tmpfs.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --- networkPolicy -------------------------------------------------------
+# Global toggle. When true, the chart renders three NetworkPolicies
+# (one per component) that together enforce the "no internet egress"
+# posture documented in docs/architecture.md §7.5.
+networkPolicy:
+  enabled: true
+  # DNS egress selector. Every component needs DNS to resolve the other
+  # in-cluster services, so the chart whitelists UDP/53 and TCP/53 to
+  # pods matching this label. Standard Kubernetes kube-dns ships with
+  # label k8s-app=kube-dns; override for CoreDNS-on-alt-label setups.
+  dns:
+    namespaceSelectorLabel:
+      key: kubernetes.io/metadata.name
+      value: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  # Ingress allowance for the gateway service on port 8080. The chart
+  # always renders a `from:` clause so an unset value cannot collapse
+  # to "any source, any namespace". When allowedFrom is empty, the
+  # template injects `- podSelector: {}` (same-namespace only). Set
+  # explicit allowedFrom entries to name a client namespace/pod.
+  gatewayIngress:
+    allowedFrom: []
+    # Example:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: platform
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: my-frontend
+
+  # Ingress allowance for the gateway's /metrics listener. /metrics is
+  # unauthenticated (scoped at the network layer) and exposes per-
+  # caller token-usage counters — an unrestricted rule would expose
+  # that data cluster-wide, so the default scopes to same-namespace
+  # pods. Override to name your Prometheus scraper when it lives in
+  # another namespace; the Prometheus Operator integration assumes
+  # this is set to match the Prometheus pod.
+  metricsIngress:
+    allowedFrom:
+      - podSelector: {}
+    # Example for Prometheus Operator in the `monitoring` namespace:
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: monitoring
+    #     podSelector:
+    #       matchLabels:
+    #         app.kubernetes.io/name: prometheus

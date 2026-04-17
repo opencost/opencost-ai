@@ -1,0 +1,67 @@
+{{- if and .Values.gateway.enabled .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opencost-ai.gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opencost-ai.gateway.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - port: 8080
+          protocol: TCP
+      # Always emit `from:` so the rule is scoped. An omitted `from:`
+      # in NetworkPolicy semantics allows ingress from every namespace
+      # — the opposite of what the default should be. When
+      # gatewayIngress.allowedFrom is empty, we inject a
+      # `podSelector: {}` so "same-namespace only" is the floor.
+      from:
+        {{- if .Values.networkPolicy.gatewayIngress.allowedFrom }}
+        {{- toYaml .Values.networkPolicy.gatewayIngress.allowedFrom | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
+    # Metrics scraping: /metrics is unauthenticated by design (it is
+    # served on a separate listener, scoped at the network layer) and
+    # exposes per-caller token-usage counters, so ingress here must be
+    # scoped. An empty `from:` in NetworkPolicy semantics means
+    # cluster-wide, which is the opposite of what we want. The default
+    # `podSelector: {}` narrows to same-namespace pods; operators whose
+    # Prometheus runs in another namespace override
+    # networkPolicy.metricsIngress.allowedFrom to permit their scraper.
+    - ports:
+        - port: 9090
+          protocol: TCP
+      from:
+        {{- toYaml .Values.networkPolicy.metricsIngress.allowedFrom | nindent 8 }}
+  egress:
+    # DNS. Required for resolving bridge service name.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.dns.namespaceSelectorLabel.key }}: {{ .Values.networkPolicy.dns.namespaceSelectorLabel.value }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 14 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Gateway talks to exactly one upstream: the bridge.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opencost-ai.bridge.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.bridge.service.port }}
+          protocol: TCP
+{{- end }}

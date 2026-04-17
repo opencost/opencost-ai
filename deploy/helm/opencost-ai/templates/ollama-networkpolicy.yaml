@@ -1,0 +1,43 @@
+{{- if and .Values.ollama.enabled .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opencost-ai.ollama.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opencost-ai.ollama.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only the bridge may reach Ollama; no direct /api/chat access
+    # from the gateway (the gateway talks to the bridge, not Ollama).
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opencost-ai.bridge.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 11434
+          protocol: TCP
+  egress:
+    # DNS only. Models must already be present on the PVC; no internet
+    # egress for `ollama pull` — air-gap installs load weights out of
+    # band per docs/architecture.md §9.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.dns.namespaceSelectorLabel.key }}: {{ .Values.networkPolicy.dns.namespaceSelectorLabel.value }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 14 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
