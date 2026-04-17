@@ -351,7 +351,16 @@ spec:
   restartPolicy: Never
   automountServiceAccountToken: false
   securityContext:
+    # curlimages/curl declares USER as the symbolic name "curl_user"
+    # (uid 100). With runAsNonRoot: true the kubelet cannot verify a
+    # symbolic user is non-root and refuses to start the container
+    # ("image has non-numeric user (curl_user), cannot verify user
+    # is non-root"). Pin the numeric uid explicitly so the check
+    # passes; 100 matches the image's intended user so the curl
+    # binary's filesystem permissions still resolve.
     runAsNonRoot: true
+    runAsUser: 100
+    runAsGroup: 100
     seccompProfile:
       type: RuntimeDefault
   containers:
@@ -366,6 +375,7 @@ ${indented}
       securityContext:
         allowPrivilegeEscalation: false
         runAsNonRoot: true
+        runAsUser: 100
         capabilities:
           drop: [ALL]
 EOF
