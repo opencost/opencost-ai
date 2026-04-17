@@ -67,6 +67,7 @@ env:
   HELM_VERSION: v3.16.2
   KIND_VERSION: v0.24.0
   KIND_NODE_IMAGE: kindest/node:v1.31.0
+  KUBECTL_VERSION: v1.31.0
   # crane is pinned for reproducible supply-chain: updates ship
   # cosign-signed releases that we would validate in a future pass.
   CRANE_VERSION: v0.20.2
@@ -100,6 +101,18 @@ jobs:
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
 
+      # Ubuntu 24.04 hosted runners do ship kubectl, but the binary
+      # path varies by image revision and is not always in sudo's
+      # secure_path. Install our own pinned copy at /usr/local/bin
+      # so `sudo` finds it deterministically and the version
+      # matches KIND_NODE_IMAGE's Kubernetes line.
+      - name: Install kubectl
+        run: |
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
       - name: Install crane
         run: |
           curl -fsSL -o /tmp/crane.tar.gz \
@@ -116,13 +129,40 @@ jobs:
           sudo install -m 0755 /tmp/oras /usr/local/bin/oras
           oras version
 
+      - name: Tool versions (debug)
+        # Last seen in CI: harness exited 2 in the first run with no
+        # visible context. Print every binary's version BEFORE the
+        # harness runs so the next failure carries enough state in
+        # the log to diagnose without re-running. Cheap (<1s) and
+        # always-on; remove once the harness is stable for ~10 runs.
+        run: |
+          set -x
+          uname -a
+          docker version
+          docker info | head -40
+          kind version
+          kubectl version --client
+          helm version --short
+          crane version
+          oras version
+          which iptables
+          sudo iptables --version
+
       - name: Run air-gap e2e (iptables mode)
         # `sudo -E` preserves GITHUB_*, PATH, and anything the earlier
         # steps exported; the harness itself only needs iptables, but
         # we keep the environment so `docker` (via the runner's
         # default group) is reachable without extra `sudo`-inside-sudo
         # trickery.
-        run: sudo -E test/airgap/run.sh
+        #
+        # `bash -x` echoes every command in the harness so a failure
+        # surfaces the exact line that exited non-zero. The trace
+        # includes the auth-token Secret value (random per run, only
+        # valid for the lifetime of the kind cluster which is torn
+        # down at job end), which is acceptable for CI debugging on
+        # an ephemeral runner. Drop the -x once airgap-e2e has been
+        # stable for ~10 consecutive runs.
+        run: sudo -E bash -x test/airgap/run.sh
 
       - name: Dump namespace on failure
         if: failure()
