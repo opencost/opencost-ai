@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Client-side Signed-off-by trailer check.
+#
+# Companion to .githooks/pre-commit. The pre-commit hook checks
+# author name + email; this one checks the commit message body for
+# a forbidden "Signed-off-by:" trailer. Running the trailer check in
+# commit-msg (not pre-commit) is the only way to see the final
+# message regardless of whether it came from -m, -F, an editor, or
+# --amend.
+#
+# Argument: $1 is the path to the file containing the final commit
+# message that will be used for the commit.
+#
+# The CI workflow (.github/workflows/authorship.yml) is authoritative.
+
+set -euo pipefail
+
+msg_file="${1:?commit-msg hook invoked without message file}"
+
+forbidden_email_re='noreply@anthropic\.com'
+# BSD grep (macOS default) treats `\b` as a literal `b` under -E;
+# GNU grep honours it as a word boundary. Portable ERE equivalent:
+# require whitespace or end-of-line after the forbidden name.
+forbidden_signer_re='^[[:space:]]*Signed-off-by:[[:space:]]*(Claude|Anthropic)([[:space:]]|$)'
+
+fail=0
+reason=""
+
+# Case-insensitive match for the email anywhere on a Signed-off-by
+# line. `git interpret-trailers --parse` is the robust way to
+# enumerate trailers, but it is not guaranteed present in every
+# contributor shell; fall back to a direct scan of Signed-off-by
+# lines.
+sob_lines="$(grep -iE '^[[:space:]]*Signed-off-by:' "${msg_file}" || true)"
+
+if [[ -n "${sob_lines}" ]]; then
+    if printf '%s' "${sob_lines}" | grep -Eiq "${forbidden_email_re}"; then
+        reason="Signed-off-by trailer contains forbidden email (${forbidden_email_re})"
+        fail=1
+    elif printf '%s' "${sob_lines}" | grep -Eiq "${forbidden_signer_re}"; then
+        reason="Signed-off-by trailer names a non-human identity (Claude/Anthropic)"
+        fail=1
+    fi
+fi
+
+if [[ "${fail}" -ne 0 ]]; then
+    cat >&2 <<MSG
+commit-msg: authorship gate rejected this commit message.
+
+  ${reason}
+
+DCO (CONTRIBUTING.md) requires every commit to carry a
+Signed-off-by line from a legal person who can attest to the terms
+of developercertificate.org. A coding-assistant identity cannot.
+
+Offending trailer(s):
+
+$(printf '%s\n' "${sob_lines}" | sed 's/^/    /')
+
+Fix: edit the commit message so the Signed-off-by line names the
+human author, e.g.
+
+  Signed-off-by: Your Name <you@example.com>
+
+An "Assisted-by: Claude Code" trailer is welcome and does not trip
+this gate; it supplements the human sign-off, it does not replace
+it.
+MSG
+    exit 1
+fi
+
+exit 0

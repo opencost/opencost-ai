@@ -1,19 +1,19 @@
 # Security policy
 
-`opencost-ai` is a pre-v0.1 project under the OpenCost CNCF
-organization. It ships no tagged release yet. This document still
-applies: security reports are welcome against `main` and any
-pre-release tag.
+`opencost-ai` is under the OpenCost CNCF organization. Security
+reports are welcome against `main` and any tagged release inside
+the support window below.
 
 ## Supported versions
 
-| Version | Supported        |
-|---------|------------------|
-| `main`  | Yes (best effort) |
-| `< v0.1`| No               |
+| Version     | Supported         |
+|-------------|-------------------|
+| `main`      | Yes (best effort) |
+| `v0.1.x`    | Yes               |
+| `< v0.1.0`  | No                |
 
-Once `v0.1.0` ships, the two most recent minor versions will receive
-security fixes. This table will be updated at that point.
+Once `v0.2.0` ships, the two most recent minor versions will
+receive security fixes; this table will be updated at that point.
 
 ## Reporting a vulnerability
 
@@ -91,8 +91,8 @@ Per `docs/architecture.md` §7.5 and `CLAUDE.md` "Non-negotiables":
 
 ## Hardening guidance for operators
 
-When v0.1 ships, `docs/security.md` and `docs/air-gap-install.md` will
-cover:
+`docs/security.md` (STRIDE threat model + operator audit checklist)
+and `docs/air-gap-install.md` cover:
 
 - Running in a namespace with PodSecurity `restricted` enforced.
 - The NetworkPolicy shipped in the Helm chart (egress only to the
