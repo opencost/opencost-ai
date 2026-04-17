@@ -28,7 +28,15 @@ const maxErrorBodyBytes = 4 << 10
 type Client struct {
 	baseURL *url.URL
 	hc      *http.Client
-	ua      string
+	// streamHC is the client used for streaming endpoints. It shares
+	// hc's Transport (so connection pooling and any operator-supplied
+	// middleware apply uniformly) but carries Timeout=0 because
+	// http.Client.Timeout bounds the whole response, including body
+	// reads — a non-zero value would kill a healthy long-lived SSE
+	// stream at the first timeout tick. Streaming callers rely on
+	// ctx cancellation for liveness instead.
+	streamHC *http.Client
+	ua       string
 }
 
 // Option configures a Client at construction time. The exported
@@ -44,12 +52,18 @@ type Option func(*Client)
 // want to thread custom TLS config or tracing middleware. A nil
 // client is ignored so a misconfigured caller cannot panic the
 // process on the first Do — the default client stays in place.
+//
+// A separate streaming client is derived from hc's Transport with
+// Timeout=0 so streaming endpoints do not inherit the per-request
+// body timeout. If hc has no Transport, streaming falls back to the
+// default transport.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) {
 		if hc == nil {
 			return
 		}
 		c.hc = hc
+		c.streamHC = &http.Client{Transport: hc.Transport}
 	}
 }
 
@@ -86,7 +100,9 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	c := &Client{
 		baseURL: u,
 		hc:      &http.Client{Timeout: DefaultHTTPTimeout},
-		ua:      "opencost-ai-gateway/dev",
+		// No Timeout on the streaming client — see streamHC doc.
+		streamHC: &http.Client{},
+		ua:       "opencost-ai-gateway/dev",
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -129,6 +145,50 @@ func (c *Client) Models(ctx context.Context) ([]TagModel, error) {
 		return nil, err
 	}
 	return env.Models, nil
+}
+
+// ChatStream opens a streaming POST /api/chat against the bridge and
+// returns a ChatStream the caller iterates with Next. req.Stream is
+// forced to true; the non-streaming Chat method is still the right
+// call when the caller does not need intermediate events.
+//
+// The returned stream holds an open HTTP connection; callers must
+// call Close when done, even if Next returned an error — the
+// deferred Close pattern is what keeps the underlying response body
+// from leaking a goroutine inside net/http.
+func (c *Client) ChatStream(ctx context.Context, req ChatRequest) (*ChatStream, error) {
+	req.Stream = true
+
+	reqURL := *c.baseURL
+	reqURL.Path = reqURL.Path + "/api/chat"
+	reqURL.RawPath = ""
+
+	buf, err := json.Marshal(req)
+	if err != nil {
+		return nil, &Error{Op: "chat_stream", Err: fmt.Errorf("marshal request: %w", err)}
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL.String(), bytes.NewReader(buf))
+	if err != nil {
+		return nil, &Error{Op: "chat_stream", Err: fmt.Errorf("build request: %w", err)}
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/x-ndjson, application/json")
+	httpReq.Header.Set("User-Agent", c.ua)
+
+	httpResp, err := c.streamHC.Do(httpReq)
+	if err != nil {
+		return nil, &Error{Op: "chat_stream", Err: err}
+	}
+	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(httpResp.Body, maxErrorBodyBytes))
+		httpResp.Body.Close()
+		return nil, &Error{
+			Op:     "chat_stream",
+			Status: httpResp.StatusCode,
+			Body:   strings.TrimSpace(string(snippet)),
+		}
+	}
+	return newChatStream(httpResp.Body), nil
 }
 
 // do is the shared request plumbing. It JSON-encodes body when

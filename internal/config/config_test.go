@@ -40,22 +40,26 @@ func TestLoad(t *testing.T) {
 		{
 			name: "full override",
 			env: map[string]string{
-				EnvBridgeURL:       "https://bridge.internal:9000",
-				EnvListenAddr:      "127.0.0.1:9090",
-				EnvDefaultModel:    "mistral-nemo:12b",
-				EnvRequestTimeout:  "30s",
-				EnvMaxRequestBytes: "16384",
-				EnvAuditLogQuery:   "true",
-				EnvAuthTokenFile:   "/etc/opencost-ai/token",
+				EnvBridgeURL:         "https://bridge.internal:9000",
+				EnvListenAddr:        "127.0.0.1:9090",
+				EnvDefaultModel:      "mistral-nemo:12b",
+				EnvRequestTimeout:    "30s",
+				EnvMaxRequestBytes:   "16384",
+				EnvAuditLogQuery:     "true",
+				EnvAuthTokenFile:     "/etc/opencost-ai/token",
+				EnvRateLimitPerMin:   "120",
+				EnvMetricsListenAddr: "0.0.0.0:9091",
 			},
 			want: Config{
-				BridgeURL:       "https://bridge.internal:9000",
-				ListenAddr:      "127.0.0.1:9090",
-				DefaultModel:    "mistral-nemo:12b",
-				RequestTimeout:  30 * time.Second,
-				MaxRequestBytes: 16384,
-				AuditLogQuery:   true,
-				AuthTokenFile:   "/etc/opencost-ai/token",
+				BridgeURL:         "https://bridge.internal:9000",
+				ListenAddr:        "127.0.0.1:9090",
+				DefaultModel:      "mistral-nemo:12b",
+				RequestTimeout:    30 * time.Second,
+				MaxRequestBytes:   16384,
+				AuditLogQuery:     true,
+				AuthTokenFile:     "/etc/opencost-ai/token",
+				RateLimitPerMin:   120,
+				MetricsListenAddr: "0.0.0.0:9091",
 			},
 		},
 		{
@@ -134,6 +138,30 @@ func TestLoad(t *testing.T) {
 			env:     map[string]string{EnvAuditLogQuery: "maybe"},
 			wantErr: "AUDIT_LOG_QUERY",
 		},
+		{
+			name:    "bad rate limit",
+			env:     map[string]string{EnvRateLimitPerMin: "lots"},
+			wantErr: "RATE_LIMIT_PER_MIN",
+		},
+		{
+			name:    "empty metrics listen addr rejected",
+			env:     map[string]string{EnvMetricsListenAddr: ""},
+			wantErr: "METRICS_LISTEN_ADDR: must not be empty",
+		},
+		{
+			name: "rate limit disabled by zero",
+			env:  map[string]string{EnvRateLimitPerMin: "0"},
+			want: func() Config {
+				c := DefaultConfig()
+				c.RateLimitPerMin = 0
+				return c
+			}(),
+		},
+		{
+			name: "rate limit empty is unset",
+			env:  map[string]string{EnvRateLimitPerMin: ""},
+			want: DefaultConfig(),
+		},
 	}
 
 	for _, tc := range cases {
@@ -168,6 +196,7 @@ func TestLoad_NilGetenvFallsBackToOS(t *testing.T) {
 	keys := []string{
 		EnvBridgeURL, EnvListenAddr, EnvDefaultModel, EnvRequestTimeout,
 		EnvMaxRequestBytes, EnvAuditLogQuery, EnvAuthTokenFile,
+		EnvRateLimitPerMin, EnvMetricsListenAddr,
 	}
 	for _, k := range keys {
 		t.Setenv(k, "") // registers cleanup to restore the prior value
@@ -267,6 +296,28 @@ func TestValidate(t *testing.T) {
 			name:    "empty token file",
 			mutate:  func(c *Config) { c.AuthTokenFile = "" },
 			wantErr: "auth token file",
+		},
+		{
+			name:    "empty metrics listen addr",
+			mutate:  func(c *Config) { c.MetricsListenAddr = "" },
+			wantErr: "metrics listen addr",
+		},
+		{
+			name:    "metrics listen addr without port",
+			mutate:  func(c *Config) { c.MetricsListenAddr = "localhost" },
+			wantErr: "missing port",
+		},
+		{
+			// RateLimitPerMin <= 0 is the documented opt-out, so
+			// Validate must not error on it.
+			name:    "rate limit zero is ok",
+			mutate:  func(c *Config) { c.RateLimitPerMin = 0 },
+			wantErr: "",
+		},
+		{
+			name:    "rate limit negative is ok",
+			mutate:  func(c *Config) { c.RateLimitPerMin = -1 },
+			wantErr: "",
 		},
 	}
 

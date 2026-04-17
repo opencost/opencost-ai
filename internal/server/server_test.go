@@ -12,8 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/auth"
 	"github.com/opencost/opencost-ai/internal/bridge"
+	"github.com/opencost/opencost-ai/internal/metrics"
+	"github.com/opencost/opencost-ai/internal/ratelimit"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -62,6 +65,9 @@ func (f *fakeBridge) Models(_ context.Context) ([]bridge.TagModel, error) {
 	}
 	return f.modelsResp, nil
 }
+func (f *fakeBridge) ChatStream(_ context.Context, _ bridge.ChatRequest) (*bridge.ChatStream, error) {
+	return nil, errors.New("fakeBridge.ChatStream: override me in a test that exercises streaming")
+}
 
 // newTestServer builds a server.New under test and returns an
 // httptest.Server wrapping it. Authorisation header "Bearer secret"
@@ -81,6 +87,9 @@ func newTestServer(t *testing.T, fb *fakeBridge, opts ...func(*Options)) (*httpt
 		DefaultModel:    "qwen2.5:7b-instruct",
 		MaxRequestBytes: 8192,
 		Logger:          discardLogger(),
+		Audit:           audit.NewLogger(io.Discard, false),
+		RateLimiter:     ratelimit.New(0), // disabled for most tests
+		Metrics:         metrics.NewRegistry(),
 	}
 	for _, f := range opts {
 		f(&o)
@@ -155,21 +164,37 @@ func assertProblemBody(t *testing.T, resp *http.Response, wantStatus int) apiv1.
 
 func TestNew_RequiresDependencies(t *testing.T) {
 	t.Parallel()
+	base := func() Options {
+		return Options{
+			Bridge:          &fakeBridge{},
+			AuthValidator:   fakeValidator{},
+			DefaultModel:    "m",
+			MaxRequestBytes: 1,
+			Audit:           audit.NewLogger(io.Discard, false),
+			RateLimiter:     ratelimit.New(0),
+			Metrics:         metrics.NewRegistry(),
+		}
+	}
 	cases := []struct {
-		name string
-		o    Options
-		sub  string
+		name   string
+		mutate func(*Options)
+		sub    string
 	}{
-		{"no bridge", Options{AuthValidator: fakeValidator{}, DefaultModel: "m", MaxRequestBytes: 1}, "Bridge"},
-		{"no auth", Options{Bridge: &fakeBridge{}, DefaultModel: "m", MaxRequestBytes: 1}, "AuthValidator"},
-		{"no default model", Options{Bridge: &fakeBridge{}, AuthValidator: fakeValidator{}, MaxRequestBytes: 1}, "DefaultModel"},
-		{"bad max bytes", Options{Bridge: &fakeBridge{}, AuthValidator: fakeValidator{}, DefaultModel: "m"}, "MaxRequestBytes"},
+		{"no bridge", func(o *Options) { o.Bridge = nil }, "Bridge"},
+		{"no auth", func(o *Options) { o.AuthValidator = nil }, "AuthValidator"},
+		{"no default model", func(o *Options) { o.DefaultModel = "" }, "DefaultModel"},
+		{"bad max bytes", func(o *Options) { o.MaxRequestBytes = 0 }, "MaxRequestBytes"},
+		{"no audit", func(o *Options) { o.Audit = nil }, "Audit"},
+		{"no rate limiter", func(o *Options) { o.RateLimiter = nil }, "RateLimiter"},
+		{"no metrics", func(o *Options) { o.Metrics = nil }, "Metrics"},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := New(tc.o)
+			o := base()
+			tc.mutate(&o)
+			_, err := New(o)
 			if err == nil {
 				t.Fatalf("want error")
 			}
@@ -472,17 +497,9 @@ func TestAsk_BadConversationID(t *testing.T) {
 	assertProblemBody(t, resp, http.StatusBadRequest)
 }
 
-func TestAsk_StreamRejectedUntilSupported(t *testing.T) {
-	t.Parallel()
-	srv, _ := newTestServer(t, nil)
-	resp := postJSON(t, srv, "/v1/ask", "secret", apiv1.AskRequest{
-		Query: "hi", Stream: true,
-	})
-	p := assertProblemBody(t, resp, http.StatusBadRequest)
-	if !strings.Contains(p.Detail, "streaming") {
-		t.Errorf("detail = %q", p.Detail)
-	}
-}
+// Streaming support is now live; the rejection test from v0.1
+// scaffold was superseded by the end-to-end streaming coverage in
+// stream_test.go.
 
 func TestAsk_BridgeTransportFailureMappedTo502(t *testing.T) {
 	t.Parallel()

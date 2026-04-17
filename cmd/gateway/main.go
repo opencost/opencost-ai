@@ -4,9 +4,15 @@
 // HTTP server, install signal handling, run. Request handling, auth,
 // audit, and bridge I/O live under internal/.
 //
-// This initial scaffold exposes a single liveness endpoint
-// (GET /v1/health) and handles SIGTERM/SIGINT by shutting down the
-// server with the configured request timeout as its drain budget.
+// The process owns two HTTP listeners:
+//
+//   - the public API on cfg.ListenAddr, exposing /v1/health (unauth)
+//     and the authenticated v1 endpoints.
+//   - the metrics listener on cfg.MetricsListenAddr (loopback by default
+//     per docs/architecture.md §7.6), exposing /metrics.
+//
+// Both listeners share the same audit/ratelimit/metrics wiring. Signal
+// handling drains both.
 package main
 
 import (
@@ -18,10 +24,17 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/opencost/opencost-ai/internal/audit"
+	"github.com/opencost/opencost-ai/internal/auth"
+	"github.com/opencost/opencost-ai/internal/bridge"
 	"github.com/opencost/opencost-ai/internal/config"
+	"github.com/opencost/opencost-ai/internal/metrics"
+	"github.com/opencost/opencost-ai/internal/ratelimit"
+	"github.com/opencost/opencost-ai/internal/server"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -52,16 +65,57 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	logger.Info("gateway starting",
 		"version", version,
 		"listen_addr", cfg.ListenAddr,
+		"metrics_listen_addr", cfg.MetricsListenAddr,
 		"bridge_url", cfg.BridgeURL,
 		"default_model", cfg.DefaultModel,
+		"rate_limit_per_min", cfg.RateLimitPerMin,
+		"audit_log_query", cfg.AuditLogQuery,
 	)
+
+	bc, err := bridge.New(cfg.BridgeURL)
+	if err != nil {
+		return fmt.Errorf("bridge client: %w", err)
+	}
+
+	auditLogger := audit.NewLogger(os.Stdout, cfg.AuditLogQuery)
+	limiter := ratelimit.New(cfg.RateLimitPerMin)
+	reg := metrics.NewRegistry()
+	authSource := auth.NewSource(cfg.AuthTokenFile)
+
+	apiHandler, err := server.New(server.Options{
+		Bridge:          bc,
+		AuthValidator:   authSource,
+		DefaultModel:    cfg.DefaultModel,
+		MaxRequestBytes: cfg.MaxRequestBytes,
+		Logger:          logger,
+		Audit:           auditLogger,
+		RateLimiter:     limiter,
+		Metrics:         reg,
+	})
+	if err != nil {
+		return fmt.Errorf("server.New: %w", err)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           newMux(logger),
+		Handler:           newMux(logger, apiHandler),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
-		WriteTimeout:      cfg.RequestTimeout,
+		// WriteTimeout must be zero on the public listener: SSE
+		// responses stream for arbitrarily long while the model emits
+		// tokens, so a hard cap here would cut the stream mid-frame.
+		// Per-request deadlines live inside the handler instead.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
+		ErrorLog:     slog.NewLogLogger(logger.Handler(), slog.LevelError),
+	}
+
+	metricsSrv := &http.Server{
+		Addr:              cfg.MetricsListenAddr,
+		Handler:           newMetricsMux(reg),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
@@ -71,21 +125,45 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	serverErr := make(chan error, 1)
+	type serveResult struct {
+		name string
+		err  error
+	}
+	results := make(chan serveResult, 2)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
+			results <- serveResult{name: "api", err: err}
 			return
 		}
-		serverErr <- nil
+		results <- serveResult{name: "api"}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			results <- serveResult{name: "metrics", err: err}
+			return
+		}
+		results <- serveResult{name: "metrics"}
 	}()
 
 	select {
-	case err := <-serverErr:
-		if err != nil {
-			return fmt.Errorf("listen: %w", err)
+	case res := <-results:
+		// An unexpected early return from either listener is fatal.
+		if res.err != nil {
+			// Best-effort shutdown of the other server before returning.
+			shutdownCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
+			_ = srv.Shutdown(shutdownCtx)
+			_ = metricsSrv.Shutdown(shutdownCtx)
+			cancel()
+			wg.Wait()
+			return fmt.Errorf("%s listener: %w", res.name, res.err)
 		}
-		return nil
 	case <-sigCtx.Done():
 		logger.Info("shutdown signal received, draining")
 	}
@@ -95,30 +173,50 @@ func run(ctx context.Context, logger *slog.Logger) error {
 	// drain instead of waiting out RequestTimeout.
 	shutdownCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if err := metricsSrv.Shutdown(shutdownCtx); err != nil && shutdownErr == nil {
+		shutdownErr = err
 	}
-	if err := <-serverErr; err != nil {
-		return fmt.Errorf("listen after shutdown: %w", err)
+	wg.Wait()
+	// Drain any remaining results so the goroutines that delivered them
+	// did not race past the select above.
+	for len(results) > 0 {
+		<-results
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("shutdown: %w", shutdownErr)
 	}
 	logger.Info("gateway stopped cleanly")
 	return nil
 }
 
-// newMux builds the HTTP routing tree. Only /v1/health is live in this
-// scaffold; the remaining /v1 endpoints land in follow-up commits once
-// the auth, bridge, and prompt packages exist.
-func newMux(logger *slog.Logger) http.Handler {
+// newMux composes the public-listener handler tree: /v1/health remains
+// unauthenticated so liveness probes succeed even if the bridge is
+// unreachable, and every other /v1/* route is delegated to the
+// authenticated handler returned by server.New.
+func newMux(logger *slog.Logger, apiHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", healthHandler(logger))
+	// Subtree match so /v1/ask, /v1/tools, /v1/models all reach the
+	// authenticated handler. Method-specific patterns registered above
+	// take precedence over the subtree, so /v1/health is not shadowed.
+	mux.Handle("/v1/", apiHandler)
+	return mux
+}
+
+// newMetricsMux binds /metrics to the registry handler. The listener
+// is bound to loopback by default; see DefaultMetricsListenAddr.
+func newMetricsMux(reg *metrics.Registry) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", reg.Handler())
 	return mux
 }
 
 // healthHandler returns a stable JSON liveness document. It does not
 // probe upstream dependencies — that concern belongs to a future
-// /v1/ready endpoint that will land with internal/bridge. Per
-// apiv1.HealthResponse, this endpoint is liveness-only in v0.1;
-// Kubernetes readiness probes must not target it yet.
+// /v1/ready endpoint. Per apiv1.HealthResponse, this endpoint is
+// liveness-only in v0.1; Kubernetes readiness probes must not target
+// it yet.
 func healthHandler(logger *slog.Logger) http.HandlerFunc {
 	resp := apiv1.HealthResponse{Status: "ok", Version: version}
 	body, err := json.Marshal(resp)

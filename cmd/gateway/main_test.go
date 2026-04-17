@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -13,7 +14,7 @@ import (
 
 func TestHealthHandler_ReturnsOK(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), http.NotFoundHandler()))
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/v1/health")
@@ -39,7 +40,12 @@ func TestHealthHandler_ReturnsOK(t *testing.T) {
 
 func TestHealthHandler_RejectsWrongMethod(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	// A POST to /v1/health must not execute the liveness handler. The
+	// /v1/ subtree catches it and delegates to the authenticated API
+	// handler, which in this test is a stand-in that 404s; in
+	// production the auth middleware 401s before any method decision.
+	// Either way, the liveness JSON body must not appear.
+	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), http.NotFoundHandler()))
 	t.Cleanup(srv.Close)
 
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/health", nil)
@@ -51,16 +57,18 @@ func TestHealthHandler_RejectsWrongMethod(t *testing.T) {
 		t.Fatalf("POST /v1/health: %v", err)
 	}
 	defer resp.Body.Close()
-	// Go 1.22 ServeMux returns 405 for method-mismatched routes when
-	// a handler exists for the same pattern under a different method.
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("POST /v1/health must not return 200; got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if bytes.Contains(body, []byte(`"status":"ok"`)) {
+		t.Errorf("POST /v1/health leaked liveness body: %s", body)
 	}
 }
 
 func TestHealthHandler_UnknownPath404(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	srv := httptest.NewServer(newMux(slog.New(slog.NewTextHandler(io.Discard, nil)), http.NotFoundHandler()))
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/does-not-exist")

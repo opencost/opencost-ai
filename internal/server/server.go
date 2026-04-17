@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/auth"
 	"github.com/opencost/opencost-ai/internal/bridge"
+	"github.com/opencost/opencost-ai/internal/metrics"
+	"github.com/opencost/opencost-ai/internal/ratelimit"
 	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
@@ -17,6 +20,7 @@ import (
 // httptest.Server in every test case.
 type Bridge interface {
 	Chat(ctx context.Context, req bridge.ChatRequest) (*bridge.ChatResponse, error)
+	ChatStream(ctx context.Context, req bridge.ChatRequest) (*bridge.ChatStream, error)
 	Models(ctx context.Context) ([]bridge.TagModel, error)
 }
 
@@ -42,6 +46,22 @@ type Options struct {
 	// Logger is used for structured logs. Defaults to slog.Default
 	// when nil.
 	Logger *slog.Logger
+
+	// Audit is the structured-audit-log sink. Required — a gateway
+	// without an audit sink would silently drop the one trace that
+	// lets operators investigate incidents. Tests that do not care
+	// about audit output should pass a Logger pointed at io.Discard.
+	Audit *audit.Logger
+
+	// RateLimiter applies the per-caller token-bucket defined in
+	// internal/ratelimit. Required; callers that want no limiting
+	// should pass a limiter constructed with perMinute<=0, which is
+	// always-allow.
+	RateLimiter *ratelimit.Limiter
+
+	// Metrics is the Prometheus registry handed to every collaborator
+	// that observes metrics. Required.
+	Metrics *metrics.Registry
 }
 
 // New returns an http.Handler exposing the v1 endpoint tree. The
@@ -64,6 +84,15 @@ func New(opts Options) (http.Handler, error) {
 	if opts.MaxRequestBytes <= 0 {
 		return nil, errors.New("server: MaxRequestBytes must be positive")
 	}
+	if opts.Audit == nil {
+		return nil, errors.New("server: Audit is required")
+	}
+	if opts.RateLimiter == nil {
+		return nil, errors.New("server: RateLimiter is required")
+	}
+	if opts.Metrics == nil {
+		return nil, errors.New("server: Metrics is required")
+	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -73,16 +102,32 @@ func New(opts Options) (http.Handler, error) {
 		logger:          opts.Logger,
 		defaultModel:    opts.DefaultModel,
 		maxRequestBytes: opts.MaxRequestBytes,
+		audit:           opts.Audit,
+		limiter:         opts.RateLimiter,
+		metrics:         opts.Metrics,
 	}
 
 	authMW := auth.Middleware(opts.AuthValidator, opts.Logger)
 	ridMW := requestid.Middleware()
+	metricsMW := metricsMiddleware(opts.Metrics)
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/ask", ridMW(authMW(http.HandlerFunc(h.ask))))
-	mux.Handle("GET /v1/tools", ridMW(authMW(http.HandlerFunc(h.tools))))
-	mux.Handle("GET /v1/models", ridMW(authMW(http.HandlerFunc(h.models))))
+	mux.Handle("POST /v1/ask", ridMW(metricsMW("/v1/ask", authMW(http.HandlerFunc(h.ask)))))
+	mux.Handle("GET /v1/tools", ridMW(metricsMW("/v1/tools", authMW(http.HandlerFunc(h.tools)))))
+	mux.Handle("GET /v1/models", ridMW(metricsMW("/v1/models", authMW(http.HandlerFunc(h.models)))))
 	return mux, nil
+}
+
+// bridgeErrorStatus returns the HTTP status code mapBridgeError would
+// write for err. Exists so the audit event and the HTTP response do
+// not drift — if mapBridgeError ever grows a new branch, both sides
+// pick it up from one place.
+func bridgeErrorStatus(err error) int {
+	var bErr *bridge.Error
+	if errors.As(err, &bErr) && bErr.Status == http.StatusServiceUnavailable {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadGateway
 }
 
 // mapBridgeError converts a bridge.Error into a caller-safe
@@ -140,11 +185,12 @@ func mapBridgeError(w http.ResponseWriter, r *http.Request, logger *slog.Logger,
 // The table intentionally does not include 401/503 — those come from
 // the auth middleware which composes its own titles.
 var problemTitles = map[int]string{
-	http.StatusBadRequest:          "Bad Request",
-	http.StatusUnsupportedMediaType: "Unsupported Media Type",
+	http.StatusBadRequest:            "Bad Request",
+	http.StatusUnsupportedMediaType:  "Unsupported Media Type",
 	http.StatusRequestEntityTooLarge: "Payload Too Large",
-	http.StatusInternalServerError: "Internal Server Error",
-	http.StatusBadGateway:          "Bad Gateway",
+	http.StatusTooManyRequests:       "Too Many Requests",
+	http.StatusInternalServerError:   "Internal Server Error",
+	http.StatusBadGateway:            "Bad Gateway",
 }
 
 // problemTitleFor looks up the canonical title for status or falls

@@ -27,14 +27,14 @@ ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
 FROM ${BUILDER_IMAGE} AS build
 WORKDIR /src
 
-# Prime the module cache first so source edits don't bust it. A
-# zero-dep module has no go.sum, and a bracket-glob COPY is not
-# portable (legacy Docker build errors on zero matches while BuildKit
-# tolerates it), so we COPY go.mod alone. Once a dependency lands,
-# add `COPY go.sum ./` and re-enable `go mod verify` on the next
-# line.
-COPY go.mod ./
-RUN go mod download
+# Prime the module cache first so source edits don't bust it. Now that
+# the gateway has a third-party dep (golang.org/x/time), go.sum exists
+# and must be copied alongside go.mod so `go mod verify` can check the
+# pinned module hashes before we compile against them — CI running
+# with network egress denied must still be able to verify, and verify
+# fails closed when go.sum is missing.
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
 COPY cmd ./cmd
 COPY internal ./internal
