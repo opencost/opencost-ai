@@ -357,17 +357,3 @@ func TestModels_UpstreamError(t *testing.T) {
 	}
 }
 
-func TestDo_NilContextIsBackground(t *testing.T) {
-	t.Parallel()
-	// Not idiomatic Go, but we promised in the doc comment to
-	// tolerate it. Regression test so the promise is enforced.
-	f := &fakeBridge{chat: func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(ChatResponse{Model: "m", Done: true})
-	}}
-	srv := newBridgeServer(t, f)
-	c := mustClient(t, srv.URL)
-
-	if _, err := c.Chat(nil, ChatRequest{Model: "m"}); err != nil { //nolint:staticcheck
-		t.Fatalf("Chat(nil ctx): %v", err)
-	}
-}

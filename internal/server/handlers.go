@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -235,14 +234,3 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 	_, _ = w.Write(body)
 }
 
-// discardBody drains and closes r.Body. Not every handler needs it,
-// but the ask handler does so the connection stays reusable after
-// an early-return error.
-//
-//nolint:unused // retained for the streaming path; called in tests.
-func discardBody(r *http.Request) {
-	if r.Body != nil {
-		_, _ = io.Copy(io.Discard, r.Body)
-		_ = r.Body.Close()
-	}
-}

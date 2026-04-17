@@ -90,12 +90,9 @@ func (c *Client) BaseURL() string { return c.baseURL.String() }
 // receives a single response with all tool_calls already resolved.
 //
 // Chat forces req.Stream to false; the streaming SSE variant lands
-// in a later session. A nil ctx is treated as context.Background
-// to match the idiom used in the rest of the gateway.
+// in a later session. ctx must be non-nil; callers that have no
+// deadline should pass context.Background explicitly.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Forcing stream=false keeps the response a single JSON object
 	// instead of a newline-delimited stream — the latter would
 	// break json.Decoder below.
@@ -112,10 +109,8 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 // bridge's /api/tags proxy. An empty list is not an error — a
 // freshly installed Ollama has no models pulled yet, and callers
 // should render that as "no models installed" rather than a failure.
+// ctx must be non-nil.
 func (c *Client) Models(ctx context.Context) ([]TagModel, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	var env tagsResponse
 	if err := c.do(ctx, http.MethodGet, "/api/tags", nil, &env, "models"); err != nil {
 		return nil, err
