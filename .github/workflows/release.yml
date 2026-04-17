@@ -240,7 +240,7 @@ jobs:
           push-to-registry: true
 
       - name: Upload SBOM as release asset
-        uses: softprops/action-gh-release@v2.0.8    # TODO: resolve to SHA before first release
+        uses: softprops/action-gh-release@v3.0.0    # TODO: resolve to SHA before first release
         with:
           files: gateway.spdx.json
           fail_on_unmatched_files: true
@@ -313,7 +313,7 @@ jobs:
           helm package deploy/helm/opencost-ai --destination dist/
 
       - name: Attach chart to release
-        uses: softprops/action-gh-release@v2.0.8    # TODO: resolve to SHA before first release
+        uses: softprops/action-gh-release@v3.0.0    # TODO: resolve to SHA before first release
         with:
           files: dist/*.tgz
           fail_on_unmatched_files: true
@@ -362,7 +362,7 @@ jobs:
           echo "notes_path=release-notes.md" >> "${GITHUB_OUTPUT}"
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2.0.8    # TODO: resolve to SHA before first release
+        uses: softprops/action-gh-release@v3.0.0    # TODO: resolve to SHA before first release
         with:
           body_path: ${{ steps.notes.outputs.notes_path }}
           draft: false
