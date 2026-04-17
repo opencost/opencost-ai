@@ -9,7 +9,32 @@ gateway release that ships them, referencing the prompt version tag.
 
 ## [Unreleased]
 
-No changes since v0.1.0.
+### Governance
+
+- Adopted upstream opencost's branch model: `develop` is the
+  integration branch, `main` holds released-version pointers only,
+  and release branches are named `v<MAJOR>.<MINOR>`. Existing CI
+  workflows (`ci.yml`, `helm.yml`, `airgap-e2e.yml`, `authorship.yml`,
+  `codeql.yml`) now trigger on `develop`. `release.yml` now sources
+  the release branch derived from the tag instead of the tag's
+  detached commit.
+- Added governance files mirrored from upstream opencost with project
+  name adjustments: `GOVERNANCE.md`, `MAINTAINERS.md`,
+  `CODE_OF_CONDUCT.md`. `CONTRIBUTING.md` and `SECURITY.md` rewritten
+  to match upstream's shape while retaining project-local build and
+  run instructions. GPG signing is no longer required; DCO sign-off
+  remains the gate.
+- Added `.github/PULL_REQUEST_TEMPLATE.md`, issue templates under
+  `.github/ISSUE_TEMPLATE/`, and `.github/dependabot.yml` (weekly
+  `gomod` at `/` and weekly `github-actions` at `/`).
+- Added `.github/workflows/scorecard.yml` (OSSF Scorecard) and
+  `.github/workflows/vulnerability-scan.yml` (Trivy filesystem
+  scan, fails on CRITICAL/HIGH). Both publish SARIF to the Security
+  tab. DCO enforcement is delegated to the DCO GitHub App; the
+  install step is a post-merge operator action.
+- Added `.github/branch-protection.md` documenting the exact branch
+  protection and tag protection rules a maintainer must apply to
+  `develop`, `main`, and `v*` release branches.
 
 ## v0.1.0 — 2026-04-17
 
