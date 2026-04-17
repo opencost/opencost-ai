@@ -77,41 +77,36 @@ env:
 
 jobs:
   # -------------------------------------------------------------------
-  # Build + push the image, capture its digest, and generate + attach
-  # the SPDX SBOM. The digest is the piece downstream jobs pivot on
-  # (cosign signs by digest; SLSA provenance references the digest) —
-  # doing everything that touches bytes in one job keeps the signed
-  # subject and the built subject trivially identical.
+  # Version metadata + release-branch derivation.
+  #
+  # Every tag-triggered job below checks out source. In the new branch
+  # model (see .github/branch-protection.md and the CHANGELOG
+  # "Governance" entry; mirrored from upstream opencost's
+  # develop/release-branch/main layout), `main` holds released
+  # pointers and `v<MAJOR>.<MINOR>` holds the source that produced the
+  # tag. Checking out a tag's SHA directly would pin the build to a
+  # detached commit, so any patch that fast-forwards the release
+  # branch after tagging (e.g. release-note cleanup, CHANGELOG
+  # corrections) would not be picked up for artefacts built from that
+  # branch's tip in a re-run. Using the release-branch ref keeps
+  # "what we built" equal to "what the release branch points at",
+  # which is the invariant maintainers can reason about.
+  #
+  # Mirrors the pattern in upstream's
+  # `.github/workflows/build-and-publish-release.yml` where the tag
+  # is normalised to a version and the branch name is constructed by
+  # stripping the patch component (v0.1.0 -> v0.1).
   # -------------------------------------------------------------------
-  build-and-sign:
-    name: build, push, sign, sbom
+  prepare:
+    name: derive version and release branch
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-
     outputs:
-      image: ${{ steps.image.outputs.ref }}
-      digest: ${{ steps.push.outputs.digest }}
-
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      major: ${{ steps.meta.outputs.major }}
+      minor: ${{ steps.meta.outputs.minor }}
+      release_branch: ${{ steps.meta.outputs.release_branch }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3.2.0    # TODO: resolve to SHA before first release
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3.3.0    # TODO: resolve to SHA before first release
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Derive version metadata
         id: meta
         run: |
@@ -127,6 +122,57 @@ jobs:
           minor="${version%.*}"
           echo "major=${major}" >> "${GITHUB_OUTPUT}"
           echo "minor=${minor}" >> "${GITHUB_OUTPUT}"
+          # Release branch name is `v<MAJOR>.<MINOR>` (e.g. v0.1), the
+          # branch cut from `develop` when the minor line opened. The
+          # tag itself lives on this branch; sourcing the branch
+          # instead of the tag's detached commit keeps re-runs in step
+          # with any fast-forward commits the branch has accumulated.
+          release_branch="v${minor}"
+          echo "release_branch=${release_branch}" >> "${GITHUB_OUTPUT}"
+          echo "derived: tag=${tag} version=${version} release_branch=${release_branch}"
+
+  # -------------------------------------------------------------------
+  # Build + push the image, capture its digest, and generate + attach
+  # the SPDX SBOM. The digest is the piece downstream jobs pivot on
+  # (cosign signs by digest; SLSA provenance references the digest) —
+  # doing everything that touches bytes in one job keeps the signed
+  # subject and the built subject trivially identical.
+  # -------------------------------------------------------------------
+  build-and-sign:
+    name: build, push, sign, sbom
+    runs-on: ubuntu-24.04
+    needs: prepare
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+      digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Source from the release branch, not the tag's commit.
+          # Fails fast if the branch does not exist, which is the
+          # intended gate: a tag outside a release branch is a
+          # process violation (see .github/branch-protection.md).
+          ref: ${{ needs.prepare.outputs.release_branch }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3.2.0    # TODO: resolve to SHA before first release
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3.3.0    # TODO: resolve to SHA before first release
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compose image reference
         id: image
@@ -145,15 +191,15 @@ jobs:
           provenance: false    # SLSA provenance comes from the official generator below
           sbom: false          # SBOM comes from anchore/sbom-action below (SPDX format)
           tags: |
-            ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.version }}
-            ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.minor }}
-            ${{ steps.image.outputs.ref }}:${{ steps.meta.outputs.major }}
+            ${{ steps.image.outputs.ref }}:${{ needs.prepare.outputs.tag }}
+            ${{ steps.image.outputs.ref }}:${{ needs.prepare.outputs.version }}
+            ${{ steps.image.outputs.ref }}:${{ needs.prepare.outputs.minor }}
+            ${{ steps.image.outputs.ref }}:${{ needs.prepare.outputs.major }}
           build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
+            VERSION=${{ needs.prepare.outputs.version }}
             REVISION=${{ github.sha }}
           labels: |
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
@@ -232,12 +278,14 @@ jobs:
   helm-package:
     name: package helm chart
     runs-on: ubuntu-24.04
-    needs: build-and-sign
+    needs: [prepare, build-and-sign]
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout release branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.release_branch }}
 
       - name: Install Helm
         run: |
@@ -281,12 +329,18 @@ jobs:
   release-notes:
     name: publish release notes
     runs-on: ubuntu-24.04
-    needs: [build-and-sign, provenance, helm-package]
+    needs: [prepare, build-and-sign, provenance, helm-package]
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout release branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # CHANGELOG.md on the release branch is the source of truth
+          # for release notes; `main` only advances after release-notes
+          # publishes, so sourcing from `main` here would race the
+          # very job that updates it.
+          ref: ${{ needs.prepare.outputs.release_branch }}
 
       - name: Extract release notes
         id: notes
