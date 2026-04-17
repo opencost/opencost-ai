@@ -101,7 +101,13 @@ jobs:
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
           curl -fsSL -o /tmp/helm.tar.gz.sha256 \
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
-          ( cd /tmp && sha256sum -c helm.tar.gz.sha256 )
+          # get.helm.sh's .sha256sum file names the upstream filename
+          # ("helm-v3.16.2-linux-amd64.tar.gz"), but we saved the
+          # tarball as helm.tar.gz. Rewrite the filename in the sum
+          # line so `sha256sum -c` looks at the file we actually have.
+          sed "s/helm-${HELM_VERSION}-linux-amd64.tar.gz\$/helm.tar.gz/" \
+            /tmp/helm.tar.gz.sha256 > /tmp/helm.sha256sum
+          ( cd /tmp && sha256sum -c helm.sha256sum )
           tar -xzf /tmp/helm.tar.gz -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
