@@ -41,10 +41,12 @@ type Source struct {
 	mu    sync.RWMutex
 	token []byte
 	mtime time.Time
-	// loaded is true once we've attempted at least one read, even if
-	// that read found an empty file. It lets Validate distinguish
-	// "never tried to load" (should try now) from "loaded and empty"
-	// (fail fast with ErrNoToken without re-stat-ing on every call).
+	// loaded is true once reloadIfChanged has successfully read the
+	// file at least once. It exists to make the mtime comparison in
+	// reloadIfChanged meaningful: before any load, s.mtime is the zero
+	// Time and must not be compared against a real os.FileInfo mtime,
+	// otherwise a freshly-constructed Source would treat the first
+	// Validate as a no-op and fall through with an empty token.
 	loaded bool
 }
 

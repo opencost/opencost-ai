@@ -54,7 +54,7 @@ func (h *handlers) ask(w http.ResponseWriter, r *http.Request) {
 		}
 		writeProblem(w, r, http.StatusBadRequest,
 			problemTitleFor(http.StatusBadRequest),
-			"request body is not valid JSON")
+			decodeErrorDetail(err))
 		return
 	}
 	// A single JSON object is the entire contract — no trailing
@@ -150,6 +150,42 @@ func (h *handlers) models(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, r, http.StatusOK, out)
+}
+
+// decodeErrorDetail returns a caller-safe problem+json detail string
+// for a json.Decoder error. It distinguishes three cases operators
+// hit in the wild: unknown-field rejections from DisallowUnknownFields
+// (useful for SDK authors debugging a schema mismatch), structural
+// JSON syntax errors, and wrong-type-for-field errors. Anything else
+// falls back to the generic "not valid JSON" message — we intentionally
+// do not surface err.Error() because it can include caller payload
+// fragments that the audit log should not leak.
+//
+// DisallowUnknownFields does not expose a typed error in stdlib (it is
+// a plain fmt.Errorf("json: unknown field %q", key) inside
+// encoding/json), so the prefix check below is the supported detection
+// pattern. It is stable across Go releases precisely because changing
+// it would silently break every downstream user that relies on it.
+func decodeErrorDetail(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "json: unknown field ") {
+		// Preserve the quoted field name the stdlib already produced
+		// so the caller sees "unknown field \"foo\"" without us having
+		// to re-parse. Strip the "json: " prefix for a cleaner wire.
+		return "request body has " + strings.TrimPrefix(msg, "json: ")
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		if typeErr.Field != "" {
+			return "request body field " + typeErr.Field + " has wrong type"
+		}
+		return "request body has a field of the wrong type"
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return "request body is not valid JSON"
+	}
+	return "request body is not valid JSON"
 }
 
 // requireJSON returns a caller-safe error if Content-Type is not

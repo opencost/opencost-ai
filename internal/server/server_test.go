@@ -424,7 +424,16 @@ func TestAsk_RejectsUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("do: %v", err)
 	}
-	assertProblemBody(t, resp, http.StatusBadRequest)
+	// Copilot review on PR #5: the detail must distinguish an unknown
+	// field from generic invalid JSON so SDK authors can diagnose a
+	// schema mismatch without reading the server log.
+	p := assertProblemBody(t, resp, http.StatusBadRequest)
+	if !strings.Contains(p.Detail, "unknown field") {
+		t.Errorf("problem.detail = %q, want to mention unknown field", p.Detail)
+	}
+	if !strings.Contains(p.Detail, `"unknown"`) {
+		t.Errorf("problem.detail = %q, want to name the rejected field", p.Detail)
+	}
 }
 
 func TestAsk_EmptyQueryRejected(t *testing.T) {

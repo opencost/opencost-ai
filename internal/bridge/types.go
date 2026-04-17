@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -138,12 +137,3 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
-// sanityCheck catches the easy regressions at init time: if any of
-// the exported types loses a field, this compiles-but-fails-to-marshal
-// failure surfaces in tests rather than in production.
-var _ = func() struct{} {
-	_, _ = json.Marshal(ChatRequest{})
-	_, _ = json.Marshal(ChatResponse{})
-	_, _ = json.Marshal(TagModel{})
-	return struct{}{}
-}()
