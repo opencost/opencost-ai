@@ -2,9 +2,13 @@ package apiv1
 
 // AskRequest is the body of POST /v1/ask.
 //
-// Field semantics mirror docs/architecture.md §7.2. All validation
-// (length, enum membership, UUID well-formedness) happens in the
-// gateway — the types here describe the wire format only.
+// Fields track the v0.1 text-shaped request from docs/architecture.md
+// §7.2. The structured-response "format" field described there is
+// intentionally deferred — the gateway ships one markdown-string
+// answer shape until a consumer actually needs structured JSON — so
+// this type does not claim full parity with §7.2 yet. All validation
+// (length, UUID well-formedness) happens in the gateway; the types
+// here describe the wire format only.
 type AskRequest struct {
 	// Query is the user-supplied natural-language question. Required.
 	// Maximum length is enforced by the gateway; see
