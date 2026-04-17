@@ -80,9 +80,9 @@ gateway:
   # material must never be committed or rendered into a chart.
   # Either:
   #   a) reference a pre-created Secret via existingSecret, or
-  #   b) set create: true AND pass --set auth.token=<value> on install,
-  #      so the raw token is supplied at install time (never stored in
-  #      values.yaml committed to a repo).
+  #   b) set create: true AND pass --set gateway.auth.token=<value> on
+  #      install, so the raw token is supplied at install time (never
+  #      stored in a values.yaml committed to a repo).
   auth:
     # If existingSecret is set, the chart wires the Deployment to mount
     # that Secret and ignores the other fields below.
@@ -90,8 +90,11 @@ gateway:
     # Key inside the Secret whose value is the raw token text.
     secretKey: "token"
     # When true and existingSecret is empty, the chart renders a Secret
-    # named "<release>-gateway-auth". The token value MUST be supplied
-    # at install time via --set auth.token=... — there is no default.
+    # named "<gateway-fullname>-auth" (usually "<release>-gateway-auth"
+    # when release name and chart name do not overlap; see the
+    # opencost-ai.gateway.authSecretName helper for the exact rule).
+    # The token value MUST be supplied at install time via
+    # --set gateway.auth.token=... — there is no default.
     create: false
     token: ""
 
@@ -268,7 +271,9 @@ ollama:
   podLabels: {}
 
   # Root filesystem is read-only; Ollama writes model state to the
-  # mounted PVC at /root/.ollama and a tmpfs at /tmp.
+  # PVC mounted at /var/lib/ollama (HOME is overridden to that path,
+  # so the default ~/.ollama cache lands on the PVC) and uses an
+  # emptyDir at /tmp for scratch — backed by node storage, not tmpfs.
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -313,9 +318,11 @@ networkPolicy:
       value: kube-system
     podSelector:
       k8s-app: kube-dns
-  # Optional ingress allowance for the gateway service. When empty, the
-  # chart lets any pod in the same namespace reach the gateway; set
-  # explicit allowedFrom entries to tighten.
+  # Ingress allowance for the gateway service on port 8080. The chart
+  # always renders a `from:` clause so an unset value cannot collapse
+  # to "any source, any namespace". When allowedFrom is empty, the
+  # template injects `- podSelector: {}` (same-namespace only). Set
+  # explicit allowedFrom entries to name a client namespace/pod.
   gatewayIngress:
     allowedFrom: []
     # Example:

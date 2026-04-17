@@ -91,9 +91,17 @@ spec:
           secret:
             secretName: {{ include "opencost-ai.gateway.authSecretName" . }}
             optional: true
+            # 0400: owner-read only. Kubernetes projects Secret items
+            # with mode 0644 by default, which is world-readable inside
+            # the pod. 0400 narrows that to the single process that
+            # runs as UID 65532, so anything that later co-tenants the
+            # pod (sidecar, ephemeral debug container) cannot read the
+            # token off the mount.
+            defaultMode: 0400
             items:
               - key: {{ .Values.gateway.auth.secretKey }}
                 path: {{ .Values.gateway.auth.secretKey }}
+                mode: 0400
         # readOnlyRootFilesystem is enforced; /tmp is the one scratch
         # area the stdlib http server and audit logger may touch.
         - name: tmp

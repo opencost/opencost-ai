@@ -18,10 +18,17 @@ spec:
     - ports:
         - port: 8080
           protocol: TCP
-      {{- with .Values.networkPolicy.gatewayIngress.allowedFrom }}
+      # Always emit `from:` so the rule is scoped. An omitted `from:`
+      # in NetworkPolicy semantics allows ingress from every namespace
+      # — the opposite of what the default should be. When
+      # gatewayIngress.allowedFrom is empty, we inject a
+      # `podSelector: {}` so "same-namespace only" is the floor.
       from:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- if .Values.networkPolicy.gatewayIngress.allowedFrom }}
+        {{- toYaml .Values.networkPolicy.gatewayIngress.allowedFrom | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
     # Metrics scraping: /metrics is unauthenticated by design (it is
     # served on a separate listener, scoped at the network layer) and
     # exposes per-caller token-usage counters, so ingress here must be

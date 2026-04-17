@@ -2,11 +2,14 @@
 #
 # Two jobs:
 #
-#   - `lint` runs `helm lint --strict` and `helm template` over the
-#     chart with the default values and with ci/lint-values.yaml (which
-#     enables every optional feature). This catches templating errors,
-#     invalid YAML, and missing `required` fields before a release PR
-#     even gets reviewed.
+#   - `lint` runs `helm lint` over the default values and
+#     `helm lint --strict` over ci/lint-values.yaml (which enables
+#     every optional feature), plus `helm template` for three value
+#     profiles. --strict is reserved for the optional-feature profile
+#     so a noisy INFO from an unused branch in the default path does
+#     not break the release gate. Catches templating errors, invalid
+#     YAML, and missing `required` fields before a release PR even
+#     gets reviewed.
 #
 #   - `integration` stands up a kind cluster, builds the gateway image
 #     from the in-tree Dockerfile, loads it into kind, installs the

@@ -5,11 +5,18 @@
 # touch the bridge, so this is enough to verify:
 #
 #   - the chart renders valid manifests
-#   - the gateway image starts and passes liveness
-#   - Service + NetworkPolicy route traffic end-to-end via port-forward
+#   - the gateway image starts, passes liveness, and serves /v1/health
+#   - the Service routes traffic end-to-end
 #
 # A future e2e job will wire in the full stack with a pre-pulled
 # model cache.
+#
+# NetworkPolicy note: kind's default CNI (kindnet) does not enforce
+# NetworkPolicy, so the policies render but are not exercised in this
+# job. `kubectl port-forward` traffic is proxied through the apiserver
+# rather than pod-to-pod, which is out of NetworkPolicy's scope
+# entirely — the assertion below that /v1/health succeeds does not
+# depend on the NP ingress configuration.
 bridge:
   enabled: false
 ollama:
@@ -29,8 +36,7 @@ gateway:
     # startup.
     create: false
     existingSecret: ""
-# NetworkPolicy is exercised but the ingress rule must allow the
-# kubectl-in-cluster port-forward source. Easiest is to leave it
-# empty (=same-namespace) and target a pod-label-based exec test.
+# NetworkPolicies are rendered so the template path is covered, but
+# kindnet (kind's default CNI) ignores them — see the header note.
 networkPolicy:
   enabled: true
