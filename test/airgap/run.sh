@@ -320,26 +320,68 @@ helm install opencost-ai "${REPO_ROOT}/deploy/helm/opencost-ai" \
 
 # --- step 5: assertions -------------------------------------------------
 
+# Emit a Pod manifest with every field required by PodSecurity
+# "restricted:latest" admission. `kubectl run` defaults are not
+# compliant, so apply a hand-rolled manifest via stdin instead.
+# Kept as a function rather than three copies because the three
+# probes only differ in name and command.
+run_probe() {
+  local name="$1"
+  local script="$2"
+  # Heredoc keeps the script body in a YAML literal block so quoting
+  # stays sane regardless of single/double quotes inside the body.
+  # The 10-space indent on $script lines matches the YAML literal-
+  # block content position (one level deeper than the `- |` marker
+  # at column 8). The trailing blank line in the heredoc preserves
+  # the block scalar's terminator.
+  local indented
+  indented="$(printf '%s\n' "${script}" | sed 's/^/          /')"
+  cat <<EOF | kubectl apply -n "${NAMESPACE}" -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${name}
+  labels:
+    app.kubernetes.io/component: airgap-probe
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: ${PROBE_IMAGE}
+      imagePullPolicy: IfNotPresent
+      command:
+        - sh
+        - -c
+        - |
+${indented}
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+EOF
+}
+
 echo ""
 echo "==> assertion 1: gateway /v1/health returns status:ok from inside the namespace"
 # In-cluster curl proves the Service + NetworkPolicy ingress wiring,
 # not just pod readiness.
-kubectl -n "${NAMESPACE}" run probe-health \
-  --image="${PROBE_IMAGE}" \
-  --restart=Never \
-  --image-pull-policy=IfNotPresent \
-  --labels=app.kubernetes.io/component=airgap-probe \
-  --command -- sh -c '
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      if body=$(curl -fsS --max-time 5 http://opencost-ai-gateway:8080/v1/health); then
-        echo "${body}"
-        echo "${body}" | grep -q "\"status\":\"ok\"" && exit 0
-      fi
-      sleep 2
-    done
-    echo "gateway /v1/health never returned status:ok" >&2
-    exit 1
-  '
+run_probe probe-health '
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if body=$(curl -fsS --max-time 5 http://opencost-ai-gateway:8080/v1/health); then
+    echo "${body}"
+    echo "${body}" | grep -q "\"status\":\"ok\"" && exit 0
+  fi
+  sleep 2
+done
+echo "gateway /v1/health never returned status:ok" >&2
+exit 1
+'
 kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-health --timeout=60s
 kubectl -n "${NAMESPACE}" logs probe-health
 kubectl -n "${NAMESPACE}" delete pod probe-health --wait=false
@@ -347,19 +389,14 @@ kubectl -n "${NAMESPACE}" delete pod probe-health --wait=false
 echo ""
 echo "==> assertion 2: internet egress from the namespace is blocked"
 # Load-bearing assertion. Curl must NOT reach the public internet.
-kubectl -n "${NAMESPACE}" run probe-egress \
-  --image="${PROBE_IMAGE}" \
-  --restart=Never \
-  --image-pull-policy=IfNotPresent \
-  --labels=app.kubernetes.io/component=airgap-probe \
-  --command -- sh -c '
-    if curl --max-time 5 -sS -o /dev/null https://1.1.1.1 2>/dev/null; then
-      echo "EGRESS LEAK: curl to 1.1.1.1 succeeded; air-gap is theatrical" >&2
-      exit 1
-    fi
-    echo "egress blocked (expected)"
-    exit 0
-  '
+run_probe probe-egress '
+if curl --max-time 5 -sS -o /dev/null https://1.1.1.1 2>/dev/null; then
+  echo "EGRESS LEAK: curl to 1.1.1.1 succeeded; air-gap is theatrical" >&2
+  exit 1
+fi
+echo "egress blocked (expected)"
+exit 0
+'
 kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-egress --timeout=30s
 kubectl -n "${NAMESPACE}" logs probe-egress
 kubectl -n "${NAMESPACE}" delete pod probe-egress --wait=false
@@ -369,19 +406,14 @@ echo "==> assertion 3: in-cluster registry is still reachable (block is scoped)"
 # If the block were overly broad, ImagePullBackOff would have tripped
 # step 4. Double-check explicitly so a future tightening does not
 # silently turn into a DoS of the registry path.
-kubectl -n "${NAMESPACE}" run probe-registry \
-  --image="${PROBE_IMAGE}" \
-  --restart=Never \
-  --image-pull-policy=IfNotPresent \
-  --labels=app.kubernetes.io/component=airgap-probe \
-  --command -- sh -c "
-    if ! curl --max-time 5 -fsS http://${REGISTRY_NAME}:${REGISTRY_PORT}/v2/ >/dev/null; then
-      echo 'registry unreachable from inside the namespace' >&2
-      exit 1
-    fi
-    echo 'registry reachable (expected)'
-    exit 0
-  "
+run_probe probe-registry "
+if ! curl --max-time 5 -fsS http://${REGISTRY_NAME}:${REGISTRY_PORT}/v2/ >/dev/null; then
+  echo 'registry unreachable from inside the namespace' >&2
+  exit 1
+fi
+echo 'registry reachable (expected)'
+exit 0
+"
 kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-registry --timeout=30s
 kubectl -n "${NAMESPACE}" logs probe-registry
 kubectl -n "${NAMESPACE}" delete pod probe-registry --wait=false
