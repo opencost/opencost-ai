@@ -52,7 +52,10 @@ set -Eeuo pipefail
 # Print file:line on any unhandled failure so diagnosis does not
 # require running the harness under `bash -x` (which would echo
 # token material into the CI log when the auth Secret is created).
-trap 'rc=$?; echo "ERROR at ${BASH_SOURCE[0]}:${LINENO} (rc=${rc})" >&2' ERR
+# BASH_LINENO[0] and BASH_SOURCE[1] identify the call site that
+# triggered the trap — plain LINENO/BASH_SOURCE[0] inside the trap
+# expand to the trap's own line and hide the real failure.
+trap 'rc=$?; src="${BASH_SOURCE[1]:-${BASH_SOURCE[0]}}"; line="${BASH_LINENO[0]:-${LINENO}}"; echo "ERROR at ${src}:${line} (rc=${rc})" >&2' ERR
 
 # --- flags --------------------------------------------------------------
 
@@ -155,14 +158,16 @@ kind create cluster \
   --wait 120s
 
 echo "==> starting in-cluster registry ${REGISTRY_NAME}:${REGISTRY_PORT}"
-if [[ -z "$(docker ps -q -f name="^${REGISTRY_NAME}$")" ]]; then
-  docker run -d --restart=always \
-    --name "${REGISTRY_NAME}" \
-    --network kind \
-    --hostname "${REGISTRY_NAME}" \
-    -p "127.0.0.1:${REGISTRY_PORT}:${REGISTRY_PORT}" \
-    registry:2 >/dev/null
-fi
+# Force-remove any previous container — `--keep` from an earlier run
+# leaves it around, and a stopped container with the same name would
+# make `docker run --name` fail under set -e.
+docker rm -f "${REGISTRY_NAME}" >/dev/null 2>&1 || true
+docker run -d --restart=always \
+  --name "${REGISTRY_NAME}" \
+  --network kind \
+  --hostname "${REGISTRY_NAME}" \
+  -p "127.0.0.1:${REGISTRY_PORT}:${REGISTRY_PORT}" \
+  registry:2 >/dev/null
 
 # --- step 2: mirror images into the in-cluster registry -----------------
 
@@ -307,14 +312,20 @@ fi
 # --- step 4: install the chart -----------------------------------------
 
 echo "==> preparing namespace and auth token"
-kubectl create namespace "${NAMESPACE}"
-kubectl label namespace "${NAMESPACE}" \
+# Idempotent variants so re-running the harness against a kept
+# cluster (`--keep` + re-invocation) does not trip on "already
+# exists" errors under set -e.
+kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace "${NAMESPACE}" --overwrite \
   pod-security.kubernetes.io/enforce=restricted \
   pod-security.kubernetes.io/audit=restricted \
   pod-security.kubernetes.io/warn=restricted
 
+token_value="airgap-e2e-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 kubectl -n "${NAMESPACE}" create secret generic opencost-ai-auth \
-  --from-literal=token="airgap-e2e-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  --from-literal=token="${token_value}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+unset token_value
 
 echo "==> helm install opencost-ai (gateway-only profile)"
 helm install opencost-ai "${REPO_ROOT}/deploy/helm/opencost-ai" \

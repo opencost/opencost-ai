@@ -37,7 +37,9 @@ done
 # connected host if it is not. This script deliberately does not call
 # `ollama pull` on the caller's behalf — the whole point is that the
 # next step may run disconnected.
-if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "${tag}"; then
+if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fqx "${tag}"; then
+  # -F: tags contain regex metachars (e.g. qwen2.5:7b-instruct); fixed
+  # string match avoids false positives/negatives.
   echo "model tag not found locally: ${tag}" >&2
   echo "run: ollama pull ${tag}" >&2
   exit 4
@@ -76,23 +78,23 @@ if [[ -z "${manifest_path}" || ! -f "${manifest_path}" ]]; then
 fi
 
 # Each layer object has digest (sha256:...) and mediaType. The GGUF
-# layer is application/vnd.ollama.image.model.
-gguf_digest="$(jq -r '
-  .layers[]
-  | select(.mediaType == "application/vnd.ollama.image.model")
-  | .digest
-' "${manifest_path}")"
-
-modelfile_digest="$(jq -r '
-  .layers[]
-  | select(.mediaType == "application/vnd.ollama.image.modelfile")
-  | .digest
-' "${manifest_path}")"
-
-if [[ -z "${gguf_digest}" || "${gguf_digest}" == "null" ]]; then
+# layer is application/vnd.ollama.image.model. Require exactly one
+# match — multi-part GGUFs could in principle produce more than one
+# layer of this type, and feeding a newline-separated digest into
+# the blob-path construction below would produce an invalid path
+# that silently resolves to "not found". Fail loudly here instead.
+gguf_count="$(jq '[.layers[] | select(.mediaType == "application/vnd.ollama.image.model")] | length' "${manifest_path}")"
+if [[ "${gguf_count}" -eq 0 ]]; then
   echo "manifest for ${tag} has no application/vnd.ollama.image.model layer" >&2
   exit 7
 fi
+if [[ "${gguf_count}" -gt 1 ]]; then
+  echo "manifest for ${tag} has ${gguf_count} GGUF layers; this script only supports single-layer models" >&2
+  exit 7
+fi
+gguf_digest="$(jq -r 'first(.layers[] | select(.mediaType == "application/vnd.ollama.image.model") | .digest)' "${manifest_path}")"
+
+modelfile_digest="$(jq -r 'first(.layers[] | select(.mediaType == "application/vnd.ollama.image.modelfile") | .digest) // "null"' "${manifest_path}")"
 
 # Blob path: blobs/sha256-<hex>  (Ollama replaces the ':' with '-').
 blob_file="${ollama_home}/blobs/${gguf_digest/:/-}"

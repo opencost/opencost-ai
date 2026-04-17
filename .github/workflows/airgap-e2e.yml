@@ -86,18 +86,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # Supply-chain note: every binary fetched below is verified
+      # against the SHA256 published alongside the release. The check
+      # relies on the release CDN serving a truthful checksum file,
+      # so a full compromise of the CDN still lands a bad binary —
+      # a follow-up will pin exact digests inline. What this catches
+      # today is accidental corruption in transit and opportunistic
+      # mirror poisoning that modifies only the binary.
+
       - name: Install Helm
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/helm.tar.gz \
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o /tmp/helm.tar.gz.sha256 \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          ( cd /tmp && sha256sum -c helm.tar.gz.sha256 )
           tar -xzf /tmp/helm.tar.gz -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
 
       - name: Install kind
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSL -o /tmp/kind.sha256 \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          # kind publishes the sha as a bare hex string without the
+          # filename suffix that sha256sum -c expects, so normalise
+          # before checking.
+          printf '%s  kind\n' "$(awk '{print $1}' /tmp/kind.sha256)" > /tmp/kind.sha256sum
+          ( cd /tmp && sha256sum -c kind.sha256sum )
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
 
@@ -108,23 +128,46 @@ jobs:
       # matches KIND_NODE_IMAGE's Kubernetes line.
       - name: Install kubectl
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/kubectl \
             "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          # kubectl.sha256 is a bare hex string — construct a line
+          # sha256sum -c can consume.
+          printf '%s  kubectl\n' "$(cat /tmp/kubectl.sha256)" > /tmp/kubectl.sha256sum
+          ( cd /tmp && sha256sum -c kubectl.sha256sum )
           sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           kubectl version --client
 
       - name: Install crane
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/crane.tar.gz \
             "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL -o /tmp/crane.checksums.txt \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/checksums.txt"
+          # Filter the multi-binary checksums file to just the
+          # artefact we downloaded, then verify.
+          grep 'go-containerregistry_Linux_x86_64.tar.gz$' /tmp/crane.checksums.txt \
+            | sed 's/go-containerregistry_Linux_x86_64.tar.gz$/crane.tar.gz/' \
+            > /tmp/crane.sha256sum
+          ( cd /tmp && sha256sum -c crane.sha256sum )
           tar -xzf /tmp/crane.tar.gz -C /tmp crane
           sudo install -m 0755 /tmp/crane /usr/local/bin/crane
           crane version
 
       - name: Install oras
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/oras.tar.gz \
             "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/oras.checksums.txt \
+            "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt"
+          grep "oras_${ORAS_VERSION}_linux_amd64.tar.gz$" /tmp/oras.checksums.txt \
+            | sed "s/oras_${ORAS_VERSION}_linux_amd64.tar.gz$/oras.tar.gz/" \
+            > /tmp/oras.sha256sum
+          ( cd /tmp && sha256sum -c oras.sha256sum )
           tar -xzf /tmp/oras.tar.gz -C /tmp oras
           sudo install -m 0755 /tmp/oras /usr/local/bin/oras
           oras version

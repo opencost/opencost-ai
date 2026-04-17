@@ -78,9 +78,17 @@ fi
     "${modelfile_base}:application/vnd.ollama.image.modelfile"
 )
 
-# Emit the digest in a grep-friendly form so the caller can feed it
-# back into values.yaml or a GitOps commit without re-parsing.
-digest="$(oras manifest fetch "${oras_flags[@]}" --descriptor "${ref}" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | head -n1 || true)"
+# Emit the digest in a machine-parseable form so the caller can
+# feed it into values.yaml or a GitOps commit without re-parsing.
+# `oras manifest fetch --descriptor` returns JSON; prefer jq when
+# available over the grep fallback, so a future oras output format
+# change can't slip a wrong value through.
+descriptor="$(oras manifest fetch "${oras_flags[@]}" --descriptor "${ref}" 2>/dev/null || true)"
+if command -v jq >/dev/null 2>&1 && [[ -n "${descriptor}" ]]; then
+  digest="$(printf '%s' "${descriptor}" | jq -r '.digest // empty')"
+else
+  digest="$(printf '%s' "${descriptor}" | grep -oE 'sha256:[0-9a-f]{64}' | head -n1 || true)"
+fi
 if [[ -n "${digest}" ]]; then
   echo "pushed ${ref}"
   echo "digest ${digest}"

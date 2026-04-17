@@ -96,4 +96,6 @@ fi
 )
 
 echo "registered ${tag} from ${ref}"
-ollama list | grep -E "^${tag//\//\\/}\\b" || true
+# awk equality on the first column — tags contain regex metachars
+# (e.g. qwen2.5:...) so a grep -E pattern would be a hazard.
+ollama list | awk -v tag="${tag}" 'NR>1 && $1 == tag' || true
