@@ -90,7 +90,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		logger.Info("shutdown signal received, draining")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.RequestTimeout)
+	// Derive shutdown from the parent ctx, not context.Background, so a
+	// test or embedded caller that cancels its ctx also aborts the
+	// drain instead of waiting out RequestTimeout.
+	shutdownCtx, cancel := context.WithTimeout(ctx, cfg.RequestTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
