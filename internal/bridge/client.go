@@ -31,17 +31,26 @@ type Client struct {
 	ua      string
 }
 
-// Option configures a Client at construction time. Options are kept
-// internal — the only currently exported one is WithHTTPClient — to
-// leave room to evolve without breaking callers.
+// Option configures a Client at construction time. The exported
+// option surface is intentionally small — WithHTTPClient and
+// WithUserAgent only — so the internals can evolve without breaking
+// callers. New options land here when a concrete caller needs them,
+// not speculatively.
 type Option func(*Client)
 
 // WithHTTPClient overrides the http.Client used for upstream calls.
 // The supplied client's Timeout still applies on top of any ctx
 // deadline the caller sets. Intended for tests and for operators who
-// want to thread custom TLS config or tracing middleware.
+// want to thread custom TLS config or tracing middleware. A nil
+// client is ignored so a misconfigured caller cannot panic the
+// process on the first Do — the default client stays in place.
 func WithHTTPClient(hc *http.Client) Option {
-	return func(c *Client) { c.hc = hc }
+	return func(c *Client) {
+		if hc == nil {
+			return
+		}
+		c.hc = hc
+	}
 }
 
 // WithUserAgent overrides the User-Agent sent with every request.

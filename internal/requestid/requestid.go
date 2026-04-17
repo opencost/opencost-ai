@@ -19,7 +19,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"time"
 )
 
 // HeaderName is the HTTP header the gateway uses for in-bound
@@ -55,16 +57,20 @@ func FromContext(ctx context.Context) string {
 	return v
 }
 
-// New returns 16 random hex chars. Not a UUID — we do not need
-// the RFC 4122 formatting guarantees — just a collision-resistant
-// correlation token.
+// New returns 16 lowercase hex characters. Not a UUID — we do not
+// need the RFC 4122 formatting guarantees — just a collision-
+// resistant correlation token. The return shape (exactly 16 hex
+// chars) is part of the function contract; downstream log/audit
+// consumers rely on it for column alignment and regex filtering.
+//
+// crypto/rand.Read on an 8-byte buffer does not fail on any
+// supported platform. In the impossible error path we still emit
+// 16 hex chars, derived from the current nanosecond clock, so the
+// contract holds even in the failure case.
 func New() string {
 	var buf [8]byte
-	// crypto/rand.Read on an 8-byte buffer cannot fail on any
-	// supported platform; fall back to a literal on the impossible
-	// error path so the request still carries *some* ID.
 	if _, err := rand.Read(buf[:]); err != nil {
-		return "req-fallback"
+		return fmt.Sprintf("%016x", uint64(time.Now().UnixNano()))
 	}
 	return hex.EncodeToString(buf[:])
 }
@@ -72,17 +78,44 @@ func New() string {
 // Middleware assigns a request ID to every incoming request,
 // writes it on the response as X-Request-ID, and stores it on the
 // request ctx for downstream handlers to read via FromContext.
-// Caller-supplied X-Request-ID values are honoured when they fit
-// within maxCallerIDLen, so a distributed trace stitches together.
+// Caller-supplied X-Request-ID values are honoured when they pass
+// sanitisation (validCallerID), so a distributed trace stitches
+// together; anything else is silently replaced with a fresh ID.
 func Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get(HeaderName)
-			if id == "" || len(id) > maxCallerIDLen {
+			if !validCallerID(id) {
 				id = New()
 			}
 			w.Header().Set(HeaderName, id)
 			next.ServeHTTP(w, r.WithContext(WithValue(r.Context(), id)))
 		})
 	}
+}
+
+// validCallerID accepts only non-empty, bounded, printable-ASCII
+// values. Control characters would corrupt the response header
+// frame or the RFC 7807 Instance URI fragment when echoed back;
+// whitespace and non-ASCII break log parsers. The allowed set is
+// intentionally a strict subset of RFC 7230 token chars plus a few
+// punctuation characters commonly used in trace IDs (":", ".",
+// "/"), which covers UUIDs, W3C traceparent values, and OTel span
+// IDs without inviting arbitrary bytes.
+func validCallerID(id string) bool {
+	if id == "" || len(id) > maxCallerIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '-' || c == '_' || c == '.' || c == ':' || c == '/':
+		default:
+			return false
+		}
+	}
+	return true
 }

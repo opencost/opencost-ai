@@ -76,8 +76,14 @@ func (s *Source) Validate(candidate string) error {
 	if len(token) == 0 {
 		return ErrNoToken
 	}
-	// ConstantTimeCompare returns 0 for differing lengths, so an
-	// attacker cannot learn the token length by timing either.
+	// subtle.ConstantTimeCompare is constant-time in the *contents* of
+	// two equal-length byte slices; it returns 0 immediately when the
+	// lengths differ, so a timing observer can still in principle
+	// learn the stored token length. That is an accepted trade-off
+	// here: operators are expected to provision tokens of a fixed,
+	// high-entropy shape (e.g. 32-byte random hex), so length is not
+	// itself a secret. If that ever changes, wrap this call in a
+	// length-padded compare.
 	if subtle.ConstantTimeCompare([]byte(candidate), token) != 1 {
 		return ErrInvalidToken
 	}
