@@ -1,0 +1,23 @@
+{{- if .Values.bridge.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "opencost-ai.bridge.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bridge
+  {{- with .Values.bridge.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.bridge.service.type }}
+  selector:
+    {{- include "opencost-ai.bridge.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.bridge.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

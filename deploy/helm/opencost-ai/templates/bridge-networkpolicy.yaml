@@ -1,0 +1,61 @@
+{{- if and .Values.bridge.enabled .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "opencost-ai.bridge.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bridge
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "opencost-ai.bridge.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Bridge accepts traffic only from the gateway.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "opencost-ai.gateway.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.networkPolicy.dns.namespaceSelectorLabel.key }}: {{ .Values.networkPolicy.dns.namespaceSelectorLabel.value }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dns.podSelector | nindent 14 }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Ollama in this release.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "opencost-ai.ollama.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: {{ .Values.ollama.service.port }}
+          protocol: TCP
+    # OpenCost MCP server. Address via namespace + pod selector so the
+    # policy lets traffic reach OpenCost pods wherever they live,
+    # without opening a blanket egress to the cluster network.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{ .Values.bridge.opencostMcp.namespaceSelectorLabel.key }}: {{ .Values.bridge.opencostMcp.namespaceSelectorLabel.value }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.bridge.opencostMcp.podSelector | nindent 14 }}
+      ports:
+        - port: {{ .Values.bridge.opencostMcp.port }}
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,43 @@
+apiVersion: v2
+name: opencost-ai
+description: |
+  Air-gap-deployable, open-source AI assistant for OpenCost. Ships the
+  opencost-ai gateway, jonigl/ollama-mcp-bridge, and Ollama (with a PVC
+  for the model cache) as a single Kubernetes release.
+
+  See docs/architecture.md for the target topology and the
+  non-negotiable security posture enforced by this chart.
+type: application
+
+# Chart version tracks chart template changes independently of the
+# gateway binary; appVersion tracks the gateway image tag. Both start
+# at 0.1.0 for the initial v0.1 scaffolding and will move together
+# until the chart is stable.
+version: 0.1.0
+appVersion: "0.1.0"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/opencost/opencost-ai
+sources:
+  - https://github.com/opencost/opencost-ai
+  - https://github.com/jonigl/ollama-mcp-bridge
+  - https://github.com/ollama/ollama
+
+keywords:
+  - opencost
+  - ai
+  - finops
+  - air-gap
+  - ollama
+  - mcp
+
+maintainers:
+  - name: OpenCost maintainers
+    url: https://github.com/opencost/opencost-ai
+
+annotations:
+  # Per CNCF community Helm chart conventions; surfaced by Artifact Hub
+  # and helm-docs tooling if/when the chart is indexed.
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/prerelease: "true"

@@ -1,0 +1,11 @@
+# Values used by `helm lint --strict` in CI. Exercises every code
+# path in the chart by enabling optional features (ServiceMonitor,
+# auth Secret creation) that the default values leave off. The Secret
+# creation path requires a token — the value here is a fixture, not a
+# real secret.
+gateway:
+  serviceMonitor:
+    enabled: true
+  auth:
+    create: true
+    token: "ci-lint-fixture-token-not-a-secret"

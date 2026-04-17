@@ -1,0 +1,36 @@
+# Values used by the kind-based integration test job. Only the gateway
+# renders; the bridge and Ollama are disabled because standing up a
+# model runtime inside a GitHub-hosted kind cluster within the job
+# budget is not feasible. The gateway's /v1/health endpoint does not
+# touch the bridge, so this is enough to verify:
+#
+#   - the chart renders valid manifests
+#   - the gateway image starts and passes liveness
+#   - Service + NetworkPolicy route traffic end-to-end via port-forward
+#
+# A future e2e job will wire in the full stack with a pre-pulled
+# model cache.
+bridge:
+  enabled: false
+ollama:
+  enabled: false
+gateway:
+  image:
+    # Overridden by the workflow after `docker buildx ... --load` into
+    # the kind cluster. Tag kept deterministic so the workflow can
+    # compute it without querying the GHCR API.
+    repository: opencost-ai-gateway
+    tag: ci-integration
+    pullPolicy: IfNotPresent
+  auth:
+    # Integration test only exercises the unauthenticated /v1/health
+    # path, so no Secret is required. The Deployment mounts the token
+    # volume as optional: true so a missing Secret does not block
+    # startup.
+    create: false
+    existingSecret: ""
+# NetworkPolicy is exercised but the ingress rule must allow the
+# kubectl-in-cluster port-forward source. Easiest is to leave it
+# empty (=same-namespace) and target a pod-label-based exec test.
+networkPolicy:
+  enabled: true

@@ -1,0 +1,41 @@
+{{- if and .Values.gateway.enabled .Values.gateway.serviceMonitor.enabled -}}
+{{- /*
+ServiceMonitor is a Prometheus Operator CRD. Rendering is gated on the
+operator opt-in (serviceMonitor.enabled) AND on the CRD being present
+in the target cluster, so installs without Prometheus Operator do not
+fail with "no matches for kind ServiceMonitor".
+*/ -}}
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "opencost-ai.gateway.fullname" . }}
+  namespace: {{ default .Release.Namespace .Values.gateway.serviceMonitor.namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+    {{- with .Values.gateway.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "opencost-ai.gateway.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.gateway.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.gateway.serviceMonitor.scrapeTimeout }}
+      {{- with .Values.gateway.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

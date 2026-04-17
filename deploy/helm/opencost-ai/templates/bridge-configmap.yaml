@@ -1,0 +1,27 @@
+{{- if .Values.bridge.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "opencost-ai.bridge.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "opencost-ai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: bridge
+data:
+  # servers.json is jonigl/ollama-mcp-bridge's configuration file. We
+  # ship it through a ConfigMap so operators don't need to rebuild the
+  # bridge image to change MCP server endpoints.
+  #
+  # transport: streamable_http — see docs/architecture.md §10 decision
+  # 1 (MCP transport choice is settled; do not swap to stdio or SSE
+  # without a design change).
+  servers.json: |
+    {
+      "mcpServers": {
+        "opencost": {
+          "transport": "streamable_http",
+          "url": "http://{{ .Values.bridge.opencostMcp.host }}:{{ .Values.bridge.opencostMcp.port }}/mcp"
+        }
+      }
+    }
+{{- end }}
