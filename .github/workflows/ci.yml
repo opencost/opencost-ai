@@ -120,11 +120,7 @@ jobs:
           exit $exit_code
       - name: Upload govulncheck report
         if: always()
-        # Pinned to major tag v4 rather than a commit SHA: this is a
-        # diagnostic-only step and the action is maintained by
-        # GitHub itself. Promote to SHA pin alongside the other
-        # actions in this file the next time they roll.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.1
         with:
           name: govulncheck-report
           path: govulncheck.json
