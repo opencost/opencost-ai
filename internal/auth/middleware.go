@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -98,14 +99,29 @@ func extractBearer(header string) (string, error) {
 // ahead of the server's handler chain — the alternative is a
 // circular import. The two helpers must stay consistent; see
 // internal/server/problem.go.
+//
+// The request ID is read from the request context (populated by
+// requestid.Middleware, which sits outside the auth middleware in
+// the gateway wire-up). When present it is threaded through both
+// the Instance URI fragment and the RequestID extension member so
+// 401/503 responses correlate with audit log entries.
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
+	reqID := requestid.FromContext(r.Context())
+	instance := r.URL.Path
+	if reqID != "" {
+		instance = r.URL.Path + "#" + reqID
+	}
 	body, _ := json.Marshal(apiv1.Problem{
-		Title:    title,
-		Status:   status,
-		Detail:   detail,
-		Instance: r.URL.Path,
+		Title:     title,
+		Status:    status,
+		Detail:    detail,
+		Instance:  instance,
+		RequestID: reqID,
 	})
 	w.Header().Set("Content-Type", apiv1.ProblemContentType)
+	if reqID != "" {
+		w.Header().Set(requestid.HeaderName, reqID)
+	}
 	// RFC 6750 §3: 401 responses should include WWW-Authenticate.
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="opencost-ai"`)

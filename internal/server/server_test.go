@@ -356,6 +356,60 @@ func TestAsk_RejectsBadJSON(t *testing.T) {
 	assertProblemBody(t, resp, http.StatusBadRequest)
 }
 
+// Copilot review on PR #5 flagged that a single dec.Decode call
+// accepts "valid JSON ... then garbage" bodies. The ask handler now
+// drains a second token and requires io.EOF.
+func TestAsk_RejectsTrailingJunk(t *testing.T) {
+	t.Parallel()
+	srv, _ := newTestServer(t, nil)
+	for _, body := range []string{
+		`{"query":"hi"} trailing`,          // non-whitespace trailing tokens
+		`{"query":"hi"}{"query":"again"}`, // two JSON values
+	} {
+		body := body
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/ask",
+				strings.NewReader(body))
+			if err != nil {
+				t.Fatalf("new: %v", err)
+			}
+			req.Header.Set("Authorization", "Bearer secret")
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("do: %v", err)
+			}
+			assertProblemBody(t, resp, http.StatusBadRequest)
+		})
+	}
+}
+
+// Whitespace after a valid object is fine (it's not a second JSON
+// value). Keep this explicit so a future "strict everything"
+// refactor doesn't accidentally reject well-formed trailing
+// newlines from curl | json_pp pipelines.
+func TestAsk_AcceptsTrailingWhitespace(t *testing.T) {
+	t.Parallel()
+	srv, _ := newTestServer(t, nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/ask",
+		strings.NewReader(`{"query":"hi"}`+"\n\t "))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, b)
+	}
+}
+
 func TestAsk_RejectsUnknownFields(t *testing.T) {
 	t.Parallel()
 	srv, _ := newTestServer(t, nil)

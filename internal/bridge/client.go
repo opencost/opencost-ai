@@ -65,9 +65,13 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("bridge URL %q: missing host", baseURL)
 	}
-	// Normalise away trailing slash so ResolveReference composes
-	// predictably regardless of whether the operator's config has
-	// a trailing slash or not.
+	// Normalise the base path so joining with a relative endpoint
+	// like "api/chat" produces <base>/api/chat regardless of whether
+	// the operator's config ended with a trailing slash. Using
+	// url.Parse against a base without a trailing slash drops the
+	// last path segment (RFC 3986 §5.3), which would strip the
+	// "/bridge" prefix from "http://host/bridge" — flagged by
+	// Copilot on PR #5.
 	u.Path = strings.TrimRight(u.Path, "/")
 
 	c := &Client{
@@ -124,10 +128,13 @@ func (c *Client) Models(ctx context.Context) ([]TagModel, error) {
 // responses become *Error; transport failures become *Error with
 // Err populated and Status == 0.
 func (c *Client) do(ctx context.Context, method, path string, body, out any, op string) error {
-	reqURL, err := c.baseURL.Parse(strings.TrimLeft(path, "/"))
-	if err != nil {
-		return &Error{Op: op, Err: fmt.Errorf("build URL: %w", err)}
-	}
+	// Build a copy of baseURL with the endpoint appended to its
+	// path. Going through (*url.URL).Parse would fold RFC 3986
+	// reference resolution over the path, which drops the final
+	// segment of a prefix like "/bridge" — not what we want.
+	reqURL := *c.baseURL
+	reqURL.Path = reqURL.Path + "/" + strings.TrimLeft(path, "/")
+	reqURL.RawPath = ""
 
 	var reqBody io.Reader
 	if body != nil {

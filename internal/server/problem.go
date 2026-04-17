@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -13,12 +14,12 @@ import (
 // extension member. All non-2xx responses from the server package
 // go through this helper so the wire shape stays consistent.
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
-	reqID := requestIDFromContext(r.Context())
+	reqID := requestid.FromContext(r.Context())
 	prob := apiv1.Problem{
 		Title:     title,
 		Status:    status,
 		Detail:    detail,
-		Instance:  r.URL.Path,
+		Instance:  instanceURI(r.URL.Path, reqID),
 		RequestID: reqID,
 	}
 	body, err := json.Marshal(prob)
@@ -34,8 +35,20 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, det
 	}
 	w.Header().Set("Content-Type", apiv1.ProblemContentType)
 	if reqID != "" {
-		w.Header().Set("X-Request-ID", reqID)
+		w.Header().Set(requestid.HeaderName, reqID)
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
+
+// instanceURI builds the RFC 7807 Instance value. When a request ID
+// is available we append "#<id>" so the field identifies the
+// specific occurrence, as apiv1.Problem.Instance promises; otherwise
+// we return the bare path so Instance is never empty.
+func instanceURI(path, reqID string) string {
+	if reqID == "" {
+		return path
+	}
+	return path + "#" + reqID
+}
+

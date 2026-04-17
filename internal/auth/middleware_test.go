@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -129,6 +131,39 @@ func TestMiddleware_ValidatorInternalError(t *testing.T) {
 	assertProblem(t, rec, http.StatusInternalServerError, "authentication check failed")
 	if got := rec.Body.String(); contains(got, "disk on fire") {
 		t.Fatalf("raw error leaked to client: %s", got)
+	}
+}
+
+// Copilot review on PR #5: auth-originated 401/503 responses must
+// include the gateway's request ID so they correlate with audit
+// entries. Compose requestid.Middleware on the outside, as the
+// real server wire-up does, and verify the Problem body carries
+// the ID.
+func TestMiddleware_ProblemIncludesRequestID(t *testing.T) {
+	t.Parallel()
+	chain := requestid.Middleware()(
+		Middleware(stubValidator{err: ErrInvalidToken}, discardLogger())(okHandler()))
+	req := httptest.NewRequest(http.MethodGet, "/v1/ping", nil)
+	req.Header.Set(requestid.HeaderName, "caller-abc")
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+	chain.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if got := rec.Header().Get(requestid.HeaderName); got != "caller-abc" {
+		t.Errorf("response %s = %q, want caller-abc", requestid.HeaderName, got)
+	}
+	var prob apiv1.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if prob.RequestID != "caller-abc" {
+		t.Errorf("problem.request_id = %q, want caller-abc", prob.RequestID)
+	}
+	if !strings.Contains(prob.Instance, "caller-abc") {
+		t.Errorf("problem.instance = %q, want to include request ID", prob.Instance)
 	}
 }
 

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/opencost/opencost-ai/internal/bridge"
+	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -55,6 +57,16 @@ func (h *handlers) ask(w http.ResponseWriter, r *http.Request) {
 			"request body is not valid JSON")
 		return
 	}
+	// A single JSON object is the entire contract — no trailing
+	// tokens, no second value. Draining one more token and requiring
+	// io.EOF closes the "valid JSON followed by garbage" hole that
+	// DisallowUnknownFields alone does not cover.
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeProblem(w, r, http.StatusBadRequest,
+			problemTitleFor(http.StatusBadRequest),
+			"request body must contain exactly one JSON object")
+		return
+	}
 	if err := validateAskRequest(&req); err != nil {
 		writeProblem(w, r, http.StatusBadRequest,
 			problemTitleFor(http.StatusBadRequest), err.Error())
@@ -75,7 +87,7 @@ func (h *handlers) ask(w http.ResponseWriter, r *http.Request) {
 		model = h.defaultModel
 	}
 
-	reqID := requestIDFromContext(r.Context())
+	reqID := requestid.FromContext(r.Context())
 	start := time.Now()
 	resp, err := h.bridge.Chat(r.Context(), bridge.ChatRequest{
 		Model: model,

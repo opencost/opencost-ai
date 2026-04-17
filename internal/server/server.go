@@ -8,6 +8,7 @@ import (
 
 	"github.com/opencost/opencost-ai/internal/auth"
 	"github.com/opencost/opencost-ai/internal/bridge"
+	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
 
@@ -75,7 +76,7 @@ func New(opts Options) (http.Handler, error) {
 	}
 
 	authMW := auth.Middleware(opts.AuthValidator, opts.Logger)
-	ridMW := requestIDMiddleware()
+	ridMW := requestid.Middleware()
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/ask", ridMW(authMW(http.HandlerFunc(h.ask))))
@@ -95,7 +96,7 @@ func mapBridgeError(w http.ResponseWriter, r *http.Request, logger *slog.Logger,
 		// Transport-level failure (DNS, conn refused, ctx cancel).
 		if bErr.Status == 0 {
 			logger.Error("bridge transport failure",
-				"op", op, "request_id", requestIDFromContext(r.Context()), "err", err)
+				"op", op, "request_id", requestid.FromContext(r.Context()), "err", err)
 			writeProblem(w, r, http.StatusBadGateway,
 				"Bad Gateway",
 				"upstream bridge is unreachable")
@@ -107,19 +108,19 @@ func mapBridgeError(w http.ResponseWriter, r *http.Request, logger *slog.Logger,
 		switch bErr.Status {
 		case http.StatusNotFound:
 			logger.Warn("bridge 404",
-				"op", op, "request_id", requestIDFromContext(r.Context()), "body", bErr.Body)
+				"op", op, "request_id", requestid.FromContext(r.Context()), "body", bErr.Body)
 			writeProblem(w, r, http.StatusBadGateway,
 				"Bad Gateway",
 				"requested upstream resource not found")
 		case http.StatusServiceUnavailable:
 			logger.Warn("bridge 503",
-				"op", op, "request_id", requestIDFromContext(r.Context()), "body", bErr.Body)
+				"op", op, "request_id", requestid.FromContext(r.Context()), "body", bErr.Body)
 			writeProblem(w, r, http.StatusServiceUnavailable,
 				"Service Unavailable",
 				"upstream bridge is not ready")
 		default:
 			logger.Error("bridge non-2xx",
-				"op", op, "status", bErr.Status, "request_id", requestIDFromContext(r.Context()), "body", bErr.Body)
+				"op", op, "status", bErr.Status, "request_id", requestid.FromContext(r.Context()), "body", bErr.Body)
 			writeProblem(w, r, http.StatusBadGateway,
 				"Bad Gateway",
 				"upstream bridge returned an error")
@@ -127,7 +128,7 @@ func mapBridgeError(w http.ResponseWriter, r *http.Request, logger *slog.Logger,
 		return
 	}
 	logger.Error("bridge unknown failure",
-		"op", op, "request_id", requestIDFromContext(r.Context()), "err", err)
+		"op", op, "request_id", requestid.FromContext(r.Context()), "err", err)
 	writeProblem(w, r, http.StatusBadGateway,
 		"Bad Gateway",
 		"upstream bridge returned an error")

@@ -87,6 +87,43 @@ func TestNew_TrimsTrailingSlash(t *testing.T) {
 	}
 }
 
+// Exercises the path-prefix fix from Copilot review on PR #5: when
+// the operator points the gateway at http://host/bridge, the client
+// must call /bridge/api/chat and /bridge/api/tags, not /api/chat and
+// /api/tags. Previously (*url.URL).Parse stripped the prefix.
+func TestClient_PreservesBasePathPrefix(t *testing.T) {
+	t.Parallel()
+	var chatPath, tagsPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/bridge/api/chat", func(w http.ResponseWriter, r *http.Request) {
+		chatPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(ChatResponse{Model: "m", Done: true})
+	})
+	mux.HandleFunc("/bridge/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		tagsPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(tagsResponse{})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	// Include a trailing slash to confirm normalisation does not
+	// re-introduce the bug.
+	c := mustClient(t, srv.URL+"/bridge/")
+
+	if _, err := c.Chat(context.Background(), ChatRequest{Model: "m"}); err != nil {
+		t.Fatalf("Chat with prefix: %v", err)
+	}
+	if chatPath != "/bridge/api/chat" {
+		t.Errorf("chat reached %q, want /bridge/api/chat", chatPath)
+	}
+	if _, err := c.Models(context.Background()); err != nil {
+		t.Fatalf("Models with prefix: %v", err)
+	}
+	if tagsPath != "/bridge/api/tags" {
+		t.Errorf("models reached %q, want /bridge/api/tags", tagsPath)
+	}
+}
+
 func TestChat_Success(t *testing.T) {
 	t.Parallel()
 	f := &fakeBridge{
