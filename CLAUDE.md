@@ -38,7 +38,8 @@ of these, stop and ask.
 
 ## Code style and structure
 
-- **Language:** Go 1.22+ for the gateway. Shell only for CI glue.
+- **Language:** current stable Go (1.26 as of initial commit) for the
+  gateway. Shell only for CI glue.
 - **Dependencies:** prefer the standard library. New third-party deps in
   `internal/` require a justification comment on the import and a note
   in the PR description.
