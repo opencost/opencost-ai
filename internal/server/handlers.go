@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,7 +11,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/bridge"
+	"github.com/opencost/opencost-ai/internal/metrics"
+	"github.com/opencost/opencost-ai/internal/ratelimit"
 	"github.com/opencost/opencost-ai/internal/requestid"
 	"github.com/opencost/opencost-ai/pkg/apiv1"
 )
@@ -26,10 +30,15 @@ type handlers struct {
 	logger          *slog.Logger
 	defaultModel    string
 	maxRequestBytes int64
+	audit           *audit.Logger
+	limiter         *ratelimit.Limiter
+	metrics         *metrics.Registry
 }
 
-// ask implements POST /v1/ask, non-streaming. Streaming SSE lands in
-// a follow-up session per the delivery plan in architecture.md §9.
+// ask implements POST /v1/ask. When req.Stream is false it returns a
+// single JSON body; when true it upgrades the response to Server-Sent
+// Events and emits typed events (`thinking`, `tool_call`,
+// `tool_result`, `token`, `done`) per docs/architecture.md §7.2.
 func (h *handlers) ask(w http.ResponseWriter, r *http.Request) {
 	if err := requireJSON(r); err != nil {
 		writeProblem(w, r, http.StatusUnsupportedMediaType,
@@ -72,47 +81,190 @@ func (h *handlers) ask(w http.ResponseWriter, r *http.Request) {
 			problemTitleFor(http.StatusBadRequest), err.Error())
 		return
 	}
-	if req.Stream {
-		// The task scope is non-streaming only. Reject rather than
-		// silently degrade so clients that set Stream:true know
-		// they're talking to the non-streaming build.
-		writeProblem(w, r, http.StatusBadRequest,
-			problemTitleFor(http.StatusBadRequest),
-			"streaming responses are not yet supported by this gateway")
+
+	// Extract the bearer token fresh here so CallerIdentity stays a
+	// property of the authenticated principal — not of some earlier
+	// parsed-and-discarded header. The auth middleware already
+	// validated it, so failure at this layer is impossible unless a
+	// future refactor breaks the chain.
+	token, _ := parseBearerToken(r.Header.Get("Authorization"))
+	caller := audit.CallerIdentity(token)
+
+	if !h.limiter.Allow(caller) {
+		h.metrics.RateLimited().Inc()
+		reqID := requestid.FromContext(r.Context())
+		detail := fmt.Sprintf("rate limit of %d requests per minute exceeded", h.limiter.PerMinute())
+		h.logAudit(audit.Event{
+			RequestID:      reqID,
+			CallerIdentity: caller,
+			Model:          modelOrDefault(req.Model, h.defaultModel),
+			Status:         http.StatusTooManyRequests,
+			Outcome:        "rate_limited",
+			Query:          req.Query,
+		})
+		writeProblem(w, r, http.StatusTooManyRequests,
+			problemTitleFor(http.StatusTooManyRequests), detail)
 		return
 	}
 
-	model := req.Model
-	if model == "" {
-		model = h.defaultModel
-	}
-
+	model := modelOrDefault(req.Model, h.defaultModel)
 	reqID := requestid.FromContext(r.Context())
-	start := time.Now()
-	resp, err := h.bridge.Chat(r.Context(), bridge.ChatRequest{
+	bridgeReq := bridge.ChatRequest{
 		Model: model,
 		Messages: []bridge.Message{
 			{Role: "user", Content: req.Query},
 		},
-	})
+	}
+
+	if req.Stream {
+		h.askStream(w, r, req, bridgeReq, caller, reqID)
+		return
+	}
+
+	start := time.Now()
+	resp, err := h.bridge.Chat(r.Context(), bridgeReq)
 	if err != nil {
+		h.recordUpstreamError("chat", err)
 		mapBridgeError(w, r, h.logger, "chat", err)
 		return
 	}
+	latency := time.Since(start)
+
+	tools := toAPIToolCalls(resp.Message.ToolCalls)
+	h.observeTokens(resp.Model, resp.PromptEvalCount, resp.EvalCount)
+	h.observeToolCalls(tools)
 
 	out := apiv1.AskResponse{
 		RequestID: reqID,
 		Model:     resp.Model,
 		Query:     req.Query,
 		Answer:    resp.Message.Content,
-		ToolCalls: toAPIToolCalls(resp.Message.ToolCalls),
+		ToolCalls: tools,
 		Usage: apiv1.Usage{
 			PromptTokens:     resp.PromptEvalCount,
 			CompletionTokens: resp.EvalCount,
 		},
-		LatencyMS: time.Since(start).Milliseconds(),
+		LatencyMS: latency.Milliseconds(),
 	}
+	h.logAudit(audit.Event{
+		RequestID:        reqID,
+		CallerIdentity:   caller,
+		Model:            resp.Model,
+		PromptTokens:     resp.PromptEvalCount,
+		CompletionTokens: resp.EvalCount,
+		ToolCalls:        toAuditToolCalls(tools),
+		LatencyMS:        latency.Milliseconds(),
+		Status:           http.StatusOK,
+		Outcome:          "ok",
+		Query:            req.Query,
+		Answer:           resp.Message.Content,
+	})
 	writeJSON(w, r, http.StatusOK, out)
+}
+
+// modelOrDefault resolves the model string for bridge dispatch and
+// for audit/metric labeling so the two stay consistent.
+func modelOrDefault(requested, fallback string) string {
+	if requested == "" {
+		return fallback
+	}
+	return requested
+}
+
+// parseBearerToken is a tolerant re-extractor of the Authorization
+// header. It intentionally duplicates the subset of internal/auth's
+// logic that handlers need, because pulling auth.extractBearer out
+// of that package is a wider refactor than the current scope.
+func parseBearerToken(header string) (string, bool) {
+	if header == "" {
+		return "", false
+	}
+	scheme, rest, ok := strings.Cut(header, " ")
+	if !ok {
+		return "", false
+	}
+	if !strings.EqualFold(scheme, "bearer") {
+		return "", false
+	}
+	token := strings.TrimSpace(rest)
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+// logAudit centralises the "never block the response on an audit
+// failure" policy. A write error is logged at Error level so
+// operators notice, but is not surfaced to the caller.
+func (h *handlers) logAudit(e audit.Event) {
+	if err := h.audit.Log(e); err != nil {
+		h.logger.Error("audit log write failed",
+			"request_id", e.RequestID, "err", err)
+	}
+}
+
+// observeTokens records per-model prompt and completion token totals
+// on the metrics registry. Called from both the streaming and non-
+// streaming paths so the series looks the same regardless of mode.
+func (h *handlers) observeTokens(model string, prompt, completion int) {
+	if prompt > 0 {
+		h.metrics.ModelTokens().WithLabelValues(model, "prompt").Add(float64(prompt))
+	}
+	if completion > 0 {
+		h.metrics.ModelTokens().WithLabelValues(model, "completion").Add(float64(completion))
+	}
+}
+
+// observeToolCalls increments the per-tool counter and, if the bridge
+// ever surfaces per-call timing, records it in the duration histogram.
+// Today neither the streaming nor the non-streaming bridge response
+// carries a per-tool duration, so the DurationMS>0 branch is dormant
+// and the histogram stays pre-registered but unobserved. The guard
+// stays so that when the bridge grows a timing field the code lights
+// up without a second metric-registry wiring change.
+func (h *handlers) observeToolCalls(tcs []apiv1.ToolCall) {
+	for _, tc := range tcs {
+		h.metrics.ToolCalls().WithLabelValues(tc.Name).Inc()
+		if tc.DurationMS > 0 {
+			h.metrics.ToolDuration().WithLabelValues(tc.Name).
+				Observe(float64(tc.DurationMS) / 1000.0)
+		}
+	}
+}
+
+// recordUpstreamError translates a bridge failure into the
+// upstream_errors_total series. The "kind" label keeps the
+// transport-vs-HTTP distinction that mapBridgeError makes for the
+// caller-facing problem+json.
+func (h *handlers) recordUpstreamError(op string, err error) {
+	kind := "unknown"
+	var bErr *bridge.Error
+	if errors.As(err, &bErr) {
+		switch {
+		case bErr.Status == 0:
+			kind = "transport"
+		case bErr.Status >= 500:
+			kind = "http_5xx"
+		case bErr.Status >= 400:
+			kind = "http_4xx"
+		default:
+			kind = "http_other"
+		}
+	}
+	h.metrics.UpstreamErrors().WithLabelValues(op, kind).Inc()
+}
+
+// toAuditToolCalls translates the wire-facing tool-call shape into
+// the narrower audit representation (arguments dropped by design).
+func toAuditToolCalls(in []apiv1.ToolCall) []audit.ToolCall {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]audit.ToolCall, 0, len(in))
+	for _, tc := range in {
+		out = append(out, audit.ToolCall{Name: tc.Name, DurationMS: tc.DurationMS})
+	}
+	return out
 }
 
 // tools implements GET /v1/tools. v0.1 returns an empty list with

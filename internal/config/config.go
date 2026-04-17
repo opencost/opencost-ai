@@ -21,6 +21,8 @@ const (
 	EnvMaxRequestBytes  = "OPENCOST_AI_MAX_REQUEST_BYTES"
 	EnvAuditLogQuery    = "OPENCOST_AI_AUDIT_LOG_QUERY"
 	EnvAuthTokenFile    = "OPENCOST_AI_AUTH_TOKEN_FILE"
+	EnvRateLimitPerMin  = "OPENCOST_AI_RATE_LIMIT_PER_MIN"
+	EnvMetricsListenAddr = "OPENCOST_AI_METRICS_LISTEN_ADDR"
 )
 
 // Defaults for each field. Mirrors docs/architecture.md §7.7.
@@ -32,6 +34,21 @@ const (
 	DefaultMaxRequestBytes = 8192
 	DefaultAuditLogQuery   = false
 	DefaultAuthTokenFile   = "/var/run/secrets/opencost-ai/token"
+
+	// DefaultRateLimitPerMin is chosen to be generous enough for a
+	// platform-engineer dashboard doing a handful of drill-down
+	// queries per minute, while small enough that a runaway client
+	// cannot generate thousands of calls to the bridge before an
+	// operator notices.
+	DefaultRateLimitPerMin = 60
+
+	// DefaultMetricsListenAddr binds /metrics to loopback by default
+	// so an unauthenticated scrape endpoint is never reachable off-
+	// node without explicit opt-in. Operators who want cluster-wide
+	// scraping should either enable the gateway's main listener or
+	// set this to ":9090" *and* ship a NetworkPolicy that restricts
+	// who can reach it. See docs/architecture.md §7.6.
+	DefaultMetricsListenAddr = "127.0.0.1:9090"
 )
 
 // Config captures the full runtime configuration of the gateway.
@@ -69,6 +86,19 @@ type Config struct {
 	// AuthTokenFile is the path to the bearer-token secret file. The
 	// auth middleware watches this path for rotation.
 	AuthTokenFile string
+
+	// RateLimitPerMin caps the number of /v1/ask calls a single
+	// caller identity (token hash) may make per minute. Zero or
+	// negative disables the limiter entirely — useful for single-
+	// tenant dev clusters where throttling is noise. See
+	// internal/ratelimit for the bucket semantics.
+	RateLimitPerMin int
+
+	// MetricsListenAddr is the separate HTTP listener the gateway
+	// uses to expose GET /metrics. Bound to loopback by default
+	// (see DefaultMetricsListenAddr) so a NetworkPolicy is not
+	// required to keep the endpoint off the cluster network.
+	MetricsListenAddr string
 }
 
 // DefaultConfig returns a Config populated with the documented
@@ -81,8 +111,10 @@ func DefaultConfig() Config {
 		DefaultModel:    DefaultModel,
 		RequestTimeout:  DefaultRequestTimeout,
 		MaxRequestBytes: DefaultMaxRequestBytes,
-		AuditLogQuery:   DefaultAuditLogQuery,
-		AuthTokenFile:   DefaultAuthTokenFile,
+		AuditLogQuery:     DefaultAuditLogQuery,
+		AuthTokenFile:     DefaultAuthTokenFile,
+		RateLimitPerMin:   DefaultRateLimitPerMin,
+		MetricsListenAddr: DefaultMetricsListenAddr,
 	}
 }
 
@@ -157,6 +189,19 @@ func Load(get Getenv) (Config, error) {
 		}
 		cfg.AuthTokenFile = v
 	}
+	if v, ok := get(EnvRateLimitPerMin); ok && v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("%s: parse int %q: %w", EnvRateLimitPerMin, v, err)
+		}
+		cfg.RateLimitPerMin = n
+	}
+	if v, ok := get(EnvMetricsListenAddr); ok {
+		if v == "" {
+			return cfg, fmt.Errorf("%s: must not be empty", EnvMetricsListenAddr)
+		}
+		cfg.MetricsListenAddr = v
+	}
 	return cfg, nil
 }
 
@@ -194,6 +239,15 @@ func (c Config) Validate() error {
 	if c.AuthTokenFile == "" {
 		errs = append(errs, errors.New("auth token file: must not be empty"))
 	}
+	if c.MetricsListenAddr == "" {
+		errs = append(errs, errors.New("metrics listen addr: must not be empty"))
+	} else if err := validateListenAddr(c.MetricsListenAddr); err != nil {
+		errs = append(errs, fmt.Errorf("metrics listen addr %q: %w", c.MetricsListenAddr, err))
+	}
+	// RateLimitPerMin is intentionally allowed to be <=0: that is the
+	// documented opt-out. Any finite integer is otherwise accepted —
+	// operators who want a very low limit for testing should not be
+	// second-guessed.
 
 	return errors.Join(errs...)
 }
