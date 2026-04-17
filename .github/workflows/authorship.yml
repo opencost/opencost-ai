@@ -28,7 +28,7 @@
 # it.
 #
 # Scope: every commit in the PR range for pull_request events;
-# HEAD~10..HEAD for pushes to main (a pragmatic window that covers
+# HEAD~10..HEAD for pushes to develop (a pragmatic window that covers
 # the usual merge batch without scanning the entire history on every
 # push).
 
@@ -36,9 +36,9 @@ name: authorship
 
 on:
   pull_request:
-    branches: [main]
+    branches: [develop]
   push:
-    branches: [main]
+    branches: [develop]
 
 permissions:
   contents: read
@@ -69,9 +69,9 @@ jobs:
             head="${{ github.event.pull_request.head.sha }}"
             range="${base}..${head}"
           else
-            # Push to main. Check the last 10 commits — covers a merge
-            # batch without walking the entire history. Adjust if we
-            # ever land batches that exceed this window.
+            # Push to develop. Check the last 10 commits — covers a
+            # merge batch without walking the entire history. Adjust
+            # if we ever land batches that exceed this window.
             range="HEAD~10..HEAD"
           fi
           echo "range=${range}" >> "${GITHUB_OUTPUT}"
