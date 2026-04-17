@@ -63,7 +63,7 @@ Three rules the design enforces:
 - `oras` ≥ 1.2
 - `crane` (go-containerregistry) for lossless image copy
 - `cosign` ≥ 2.4 (optional, recommended for verification pre-push)
-- `helm` ≥ 3.16 and `kubectl` ≥ 1.31 (for the dry-run render below)
+- `helm` ≥ 3.16 and `kubectl` ≥ 1.31
 - ~20 GB free disk (weights + image layers)
 
 ### On the disconnected cluster
@@ -163,36 +163,30 @@ registry serves plain HTTP.
 
 ## Step 3 — Pre-populate the Ollama PVC
 
-Two supported approaches. Pick one based on how your cluster handles
-volume provisioning.
+The chart in this repo does not (yet) ship a model-bootstrap Job —
+that work is tracked separately and must land before this section
+gains an executable example. Until then, pre-populate the PVC by
+hand. The flow below is the supported path for v0.1.
 
-### 3a. Init job (default)
+### Future direction: chart-managed init job
 
-A one-shot Job mounts the Ollama PVC, pulls the OCI artefact produced
-in Step 1, materialises the GGUF to the PVC, and runs `ollama create`
-against a local Ollama binary (bundled in the Ollama image) to
-register the model under the expected tag. The Job completes before
-the Ollama StatefulSet starts.
+Sketch only — no template renders these values today, do not paste
+this into a real `values.yaml`:
 
-```sh
-helm upgrade --install opencost-ai deploy/helm/opencost-ai \
-  --namespace opencost-ai \
-  --values values-airgap.yaml \
-  --set ollama.modelBootstrap.enabled=true \
-  --set ollama.modelBootstrap.ociRef=registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest \
-  --set ollama.modelBootstrap.modelName=qwen2.5:7b-instruct
+```yaml
+# Future (NOT shipped yet — pseudo-config):
+# ollama:
+#   modelBootstrap:
+#     enabled: true
+#     ociRef: registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest
+#     modelName: qwen2.5:7b-instruct
 ```
 
-The init Job borrows the Ollama image (it already has the `ollama`
-binary) plus a tiny `oras` sidecar. Both images must be mirrored per
-Step 2.
+When this ships, the Job will borrow the Ollama image (already has
+the `ollama` binary) plus a tiny `oras` sidecar; both images must
+be mirrored per Step 2. Until then, use the manual approach below.
 
-> **Status:** the `ollama.modelBootstrap.*` values and the template
-> that renders the Job are tracked in
-> [issue TBD](https://github.com/opencost/opencost-ai/issues). Until
-> that ships, use approach 3b.
-
-### 3b. Pre-provisioned volume
+### Pre-provisioned volume (the supported path today)
 
 For shops that provision volumes out of band (NetApp / PowerScale /
 pre-baked CSI snapshots), skip the Job entirely:

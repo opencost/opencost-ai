@@ -48,7 +48,11 @@
 #   kind, kubectl, helm, docker, crane, iptables
 #   oras (optional; skipped with a warning when missing)
 
-set -euo pipefail
+set -Eeuo pipefail
+# Print file:line on any unhandled failure so diagnosis does not
+# require running the harness under `bash -x` (which would echo
+# token material into the CI log when the auth Secret is created).
+trap 'rc=$?; echo "ERROR at ${BASH_SOURCE[0]}:${LINENO} (rc=${rc})" >&2' ERR
 
 # --- flags --------------------------------------------------------------
 
@@ -367,6 +371,58 @@ ${indented}
 EOF
 }
 
+# Pre-flight: dump everything in the namespace so the next failure
+# carries enough state to diagnose without re-running. Cheap, always
+# on. The gateway-Ready wait below is what catches the "helm
+# install --wait reported success but the pod is actually
+# CrashLoopBackOff" case that the previous revision missed.
+echo ""
+echo "==> post-install state"
+kubectl -n "${NAMESPACE}" get pods,svc,endpoints,deploy -o wide
+echo ""
+echo "==> waiting for gateway pod to be Ready (60s)"
+if ! kubectl -n "${NAMESPACE}" wait \
+       --for=condition=Ready pod \
+       -l app.kubernetes.io/component=gateway \
+       --timeout=60s; then
+  echo "gateway pod did not reach Ready — dumping diagnostics" >&2
+  kubectl -n "${NAMESPACE}" describe pod -l app.kubernetes.io/component=gateway >&2 || true
+  kubectl -n "${NAMESPACE}" logs -l app.kubernetes.io/component=gateway --tail=200 >&2 || true
+  exit 1
+fi
+
+# wait_probe: poll until the named pod reaches a terminal phase
+# (Succeeded or Failed), unconditionally dump its describe + logs,
+# then exit non-zero if it did not Succeed. Replaces the previous
+# `kubectl wait --for=jsonpath=…=Succeeded` which silently waited
+# until timeout when a probe Failed, leaving the operator with no
+# log output.
+wait_probe() {
+  local name="$1"
+  local timeout="${2:-90}"
+  local phase=""
+  local i
+  for ((i = 0; i < timeout; i += 2)); do
+    phase="$(kubectl -n "${NAMESPACE}" get pod "${name}" \
+              -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    case "${phase}" in
+      Succeeded|Failed) break ;;
+    esac
+    sleep 2
+  done
+
+  echo "--- ${name}: phase=${phase} ---"
+  kubectl -n "${NAMESPACE}" describe pod "${name}" 2>&1 | sed 's/^/    /' || true
+  echo "--- ${name}: logs ---"
+  kubectl -n "${NAMESPACE}" logs "${name}" 2>&1 | sed 's/^/    /' || true
+
+  if [[ "${phase}" != "Succeeded" ]]; then
+    echo "${name} did not Succeed (phase=${phase})" >&2
+    return 1
+  fi
+  kubectl -n "${NAMESPACE}" delete pod "${name}" --wait=false >/dev/null
+}
+
 echo ""
 echo "==> assertion 1: gateway /v1/health returns status:ok from inside the namespace"
 # In-cluster curl proves the Service + NetworkPolicy ingress wiring,
@@ -382,9 +438,7 @@ done
 echo "gateway /v1/health never returned status:ok" >&2
 exit 1
 '
-kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-health --timeout=60s
-kubectl -n "${NAMESPACE}" logs probe-health
-kubectl -n "${NAMESPACE}" delete pod probe-health --wait=false
+wait_probe probe-health 120
 
 echo ""
 echo "==> assertion 2: internet egress from the namespace is blocked"
@@ -397,9 +451,7 @@ fi
 echo "egress blocked (expected)"
 exit 0
 '
-kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-egress --timeout=30s
-kubectl -n "${NAMESPACE}" logs probe-egress
-kubectl -n "${NAMESPACE}" delete pod probe-egress --wait=false
+wait_probe probe-egress 60
 
 echo ""
 echo "==> assertion 3: in-cluster registry is still reachable (block is scoped)"
@@ -414,9 +466,7 @@ fi
 echo 'registry reachable (expected)'
 exit 0
 "
-kubectl -n "${NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/probe-registry --timeout=30s
-kubectl -n "${NAMESPACE}" logs probe-registry
-kubectl -n "${NAMESPACE}" delete pod probe-registry --wait=false
+wait_probe probe-registry 60
 
 echo ""
 echo "==> assertion 4: gateway pod image came from the in-cluster registry"

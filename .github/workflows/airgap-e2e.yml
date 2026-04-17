@@ -155,14 +155,13 @@ jobs:
         # default group) is reachable without extra `sudo`-inside-sudo
         # trickery.
         #
-        # `bash -x` echoes every command in the harness so a failure
-        # surfaces the exact line that exited non-zero. The trace
-        # includes the auth-token Secret value (random per run, only
-        # valid for the lifetime of the kind cluster which is torn
-        # down at job end), which is acceptable for CI debugging on
-        # an ephemeral runner. Drop the -x once airgap-e2e has been
-        # stable for ~10 consecutive runs.
-        run: sudo -E bash -x test/airgap/run.sh
+        # No `bash -x`: the harness creates a Kubernetes Secret with
+        # `--from-literal=token=…`, and xtrace would echo that token
+        # value into the public CI log. The script itself sets an
+        # ERR trap that prints file:line on any unhandled failure
+        # and emits explicit `==>` step markers, which is enough for
+        # diagnosis without the secret-leak risk.
+        run: sudo -E bash test/airgap/run.sh
 
       - name: Dump namespace on failure
         if: failure()

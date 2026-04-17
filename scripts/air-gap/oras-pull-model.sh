@@ -28,7 +28,24 @@ fi
 
 ref="$1"
 tag="$2"
-workdir="${3:-$(mktemp -d)}"
+# When the caller supplies a workdir, treat it as theirs to manage.
+# When we mint one, take responsibility for cleaning it up so this
+# script does not accumulate /tmp/tmp.* directories on long-lived
+# helper pods or on a sneakernet host that pulls many models.
+workdir_owned=0
+if [[ $# -eq 3 ]]; then
+  workdir="$3"
+else
+  workdir="$(mktemp -d)"
+  workdir_owned=1
+fi
+
+cleanup() {
+  if [[ "${workdir_owned}" == 1 && -n "${workdir:-}" && -d "${workdir}" ]]; then
+    rm -rf -- "${workdir}"
+  fi
+}
+trap cleanup EXIT
 
 for cmd in oras ollama; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then

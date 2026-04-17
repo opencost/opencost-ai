@@ -87,8 +87,10 @@ sudo test/airgap/run.sh --mirror-upstream
 sudo test/airgap/run.sh --keep
 ```
 
-The script prints the final kind context so follow-up `kubectl`
-commands just work.
+With `--keep`, the harness leaves the kind cluster running so you
+can inspect it manually with `kubectl` after the assertions complete
+(the kind context is `kind-${CLUSTER_NAME}` — by default
+`kind-opencost-ai-airgap`).
 
 ## Layout
 
