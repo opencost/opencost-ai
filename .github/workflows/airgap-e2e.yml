@@ -178,16 +178,23 @@ jobs:
       # self-hosted runner re-using the same host would not. The
       # comment tag is the scope of the delete so only our rules
       # are touched.
-      - name: Force-clean iptables rules (belt-and-braces)
+      - name: Force-clean iptables/ip6tables rules (belt-and-braces)
         if: always()
         run: |
-          sudo iptables -S DOCKER-USER | grep -- '--comment opencost-ai-airgap-e2e' | \
-            sed 's/^-A /-D /' | \
-            while read -r rule; do
-              # shellcheck disable=SC2086
-              sudo iptables ${rule} || true
-            done
-          sudo iptables -S DOCKER-USER | grep -- '--comment opencost-ai-airgap-e2e' && {
-            echo "iptables rules still present after cleanup" >&2
-            exit 1
-          } || true
+          # Cover both address families because the kind docker
+          # network is dual-stack on hosted runners and the harness
+          # applies rules to both ip4 and ip6 DOCKER-USER chains.
+          for ipt in iptables ip6tables; do
+            sudo "${ipt}" -S DOCKER-USER 2>/dev/null \
+              | grep -- '--comment opencost-ai-airgap-e2e' \
+              | sed 's/^-A /-D /' \
+              | while read -r rule; do
+                  # shellcheck disable=SC2086
+                  sudo "${ipt}" ${rule} || true
+                done
+            if sudo "${ipt}" -S DOCKER-USER 2>/dev/null \
+                 | grep -- '--comment opencost-ai-airgap-e2e' >/dev/null; then
+              echo "${ipt} rules still present after cleanup" >&2
+              exit 1
+            fi
+          done

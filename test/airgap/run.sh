@@ -80,7 +80,7 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-for cmd in kind kubectl helm docker crane iptables; do
+for cmd in kind kubectl helm docker crane iptables ip6tables; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "missing required command: ${cmd}" >&2
     exit 3
@@ -103,14 +103,18 @@ cleanup() {
   if [[ -n "${KIND_BRIDGE}" ]]; then
     # Remove any rule we inserted (match by comment tag so repeated
     # runs cannot accumulate rules or mistakenly delete unrelated ones).
-    while iptables -C DOCKER-USER -i "${KIND_BRIDGE}" -m comment --comment "${IPT_COMMENT}" -j DROP 2>/dev/null; do
-      iptables -D DOCKER-USER -i "${KIND_BRIDGE}" -m comment --comment "${IPT_COMMENT}" -j DROP || true
-    done
-    # Clean up the allow-to-registry RETURN rule as well.
-    while iptables -S DOCKER-USER | grep -q -- "--comment ${IPT_COMMENT} -j RETURN"; do
-      rule_spec="$(iptables -S DOCKER-USER | grep -- "--comment ${IPT_COMMENT} -j RETURN" | head -n1 | sed 's/^-A /-D /')"
-      # shellcheck disable=SC2086
-      iptables ${rule_spec} || break
+    # Cover both ip4 and ip6 because the kind docker network is dual-
+    # stack on GitHub-hosted runners and we apply rules to both
+    # families when both subnets are present.
+    for ipt in iptables ip6tables; do
+      while ${ipt} -C DOCKER-USER -i "${KIND_BRIDGE}" -m comment --comment "${IPT_COMMENT}" -j DROP 2>/dev/null; do
+        ${ipt} -D DOCKER-USER -i "${KIND_BRIDGE}" -m comment --comment "${IPT_COMMENT}" -j DROP || true
+      done
+      while ${ipt} -S DOCKER-USER 2>/dev/null | grep -q -- "--comment ${IPT_COMMENT} -j RETURN"; do
+        rule_spec="$(${ipt} -S DOCKER-USER | grep -- "--comment ${IPT_COMMENT} -j RETURN" | head -n1 | sed 's/^-A /-D /')"
+        # shellcheck disable=SC2086
+        ${ipt} ${rule_spec} || break
+      done
     done
   fi
 
@@ -235,21 +239,66 @@ if [[ -z "${KIND_BRIDGE}" ]]; then
 fi
 echo "==> kind bridge: ${KIND_BRIDGE}"
 
-REGISTRY_CIDR="$(docker network inspect kind -f '{{(index .IPAM.Config 0).Subnet}}')"
+# The kind docker network is dual-stack on GitHub-hosted runners
+# (IPAM.Config has both an IPv4 and an IPv6 entry). The previous
+# revision read only IPAM.Config[0] and fed an IPv6 /64 to ipv4
+# iptables, which rejected it ("invalid mask `64' specified") and
+# took the script with it. Iterate every configured subnet and
+# pick the iptables variant that matches its address family. Apply
+# one DROP per family that has at least one subnet, plus one RETURN
+# per subnet so the in-cluster registry remains reachable on
+# whichever family it was assigned.
+mapfile -t KIND_SUBNETS < <(docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}')
+ipv4_subnets=()
+ipv6_subnets=()
+for subnet in "${KIND_SUBNETS[@]}"; do
+  [[ -z "${subnet}" ]] && continue
+  if [[ "${subnet}" == *:* ]]; then
+    ipv6_subnets+=("${subnet}")
+  else
+    ipv4_subnets+=("${subnet}")
+  fi
+done
+
 # Order matters: iptables evaluates rules top-down and -I prepends,
-# so the DROP goes in first and then the RETURN goes in front of it.
-# After both inserts the effective order is RETURN-then-DROP, which
-# is what we want.
-iptables -I DOCKER-USER 1 \
-  -i "${KIND_BRIDGE}" \
-  -m comment --comment "${IPT_COMMENT}" \
-  -j DROP
-iptables -I DOCKER-USER 1 \
-  -i "${KIND_BRIDGE}" \
-  -d "${REGISTRY_CIDR}" \
-  -m comment --comment "${IPT_COMMENT}" \
-  -j RETURN
-echo "    iptables: RETURN -d ${REGISTRY_CIDR}, DROP -i ${KIND_BRIDGE}"
+# so the DROP must be inserted first and the RETURNs are then
+# prepended in front of it. After all inserts the effective order
+# is RETURN(s)-then-DROP, which is what we want.
+if [[ ${#ipv4_subnets[@]} -gt 0 ]]; then
+  iptables -I DOCKER-USER 1 \
+    -i "${KIND_BRIDGE}" \
+    -m comment --comment "${IPT_COMMENT}" \
+    -j DROP
+  for subnet in "${ipv4_subnets[@]}"; do
+    iptables -I DOCKER-USER 1 \
+      -i "${KIND_BRIDGE}" \
+      -d "${subnet}" \
+      -m comment --comment "${IPT_COMMENT}" \
+      -j RETURN
+    echo "    iptables: RETURN -d ${subnet}"
+  done
+  echo "    iptables: DROP -i ${KIND_BRIDGE}"
+fi
+if [[ ${#ipv6_subnets[@]} -gt 0 ]]; then
+  ip6tables -I DOCKER-USER 1 \
+    -i "${KIND_BRIDGE}" \
+    -m comment --comment "${IPT_COMMENT}" \
+    -j DROP
+  for subnet in "${ipv6_subnets[@]}"; do
+    ip6tables -I DOCKER-USER 1 \
+      -i "${KIND_BRIDGE}" \
+      -d "${subnet}" \
+      -m comment --comment "${IPT_COMMENT}" \
+      -j RETURN
+    echo "    ip6tables: RETURN -d ${subnet}"
+  done
+  echo "    ip6tables: DROP -i ${KIND_BRIDGE}"
+fi
+if [[ ${#ipv4_subnets[@]} -eq 0 && ${#ipv6_subnets[@]} -eq 0 ]]; then
+  echo "no IPAM subnets discovered on the kind network — refusing to apply" >&2
+  echo "an empty egress block (assertion 2 would not be honest)" >&2
+  exit 7
+fi
 
 # --- step 4: install the chart -----------------------------------------
 
