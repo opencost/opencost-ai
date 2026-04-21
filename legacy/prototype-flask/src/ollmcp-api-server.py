@@ -63,7 +63,9 @@ def query():
         user_query = data['query']
         model = data.get('model', DEFAULT_MODEL)  # Use provided model or default
         if not isinstance(model, str) or not MODEL_PATTERN.fullmatch(model):
-            return jsonify({"error": "Invalid 'model' format"}), 400
+            return jsonify({
+                "error": "Invalid 'model': must be a string of up to 128 characters, start with a letter or digit, and contain only letters, digits, '.', '_', ':', or '-'."
+            }), 400
 
         child = pexpect.spawn(
             'ollmcp',
