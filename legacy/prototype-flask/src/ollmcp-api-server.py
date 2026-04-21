@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import os
 import time
+import re
 import pexpect
 from flask import Flask, request, jsonify
 from pathlib import Path
@@ -18,6 +19,7 @@ app = Flask(__name__)
 # Configuration
 MCP_CONFIG = "/root/.config/ollmcp/servers.json"
 DEFAULT_MODEL = os.environ.get('DEFAULT_MODEL', 'qwen2.5:0.5b')
+MODEL_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -44,10 +46,12 @@ def query():
 
         user_query = data['query']
         model = data.get('model', DEFAULT_MODEL)  # Use provided model or default
-
+        if not isinstance(model, str) or not MODEL_PATTERN.fullmatch(model):
+            return jsonify({"error": "Invalid 'model' format"}), 400
 
         child = pexpect.spawn(
-            f'ollmcp -j {MCP_CONFIG} -m {model}',
+            'ollmcp',
+            args=['-j', MCP_CONFIG, '-m', model],
             timeout=300,  # 5 minutes for complex queries
             encoding='utf-8'
         )
