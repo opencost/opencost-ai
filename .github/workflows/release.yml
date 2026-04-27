@@ -168,7 +168,7 @@ jobs:
         uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3.3.0    # TODO: resolve to SHA before first release
+        uses: docker/login-action@v4.1.0    # TODO: resolve to SHA before first release
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
