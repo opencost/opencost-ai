@@ -232,7 +232,7 @@ jobs:
           artifact-name: gateway.spdx.json
 
       - name: Attest SBOM to image
-        uses: actions/attest-sbom@v2.1.0    # TODO: resolve to SHA before first release
+        uses: actions/attest-sbom@v4.1.0    # TODO: resolve to SHA before first release
         with:
           subject-name: ${{ steps.image.outputs.ref }}
           subject-digest: ${{ steps.push.outputs.digest }}
