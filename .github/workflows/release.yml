@@ -224,7 +224,7 @@ jobs:
             "${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}"
 
       - name: Generate SBOM (SPDX)
-        uses: anchore/sbom-action@v0.17.2    # TODO: resolve to SHA before first release
+        uses: anchore/sbom-action@v0.24.0    # TODO: resolve to SHA before first release
         with:
           image: ${{ steps.image.outputs.ref }}@${{ steps.push.outputs.digest }}
           format: spdx-json
