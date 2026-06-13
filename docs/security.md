@@ -396,9 +396,9 @@ not ambiguous.
   coordinated with the upstream maintainer and tracked in
   `SECURITY.md` scope.
 - **Model licensing drift.** The default model
-  (`qwen2.5:7b-instruct`, Apache-2.0) and the two documented
-  overrides are all permissively licensed today. An operator
-  overriding to a non-permissive model (`llama3.1` variants
+  (`granite3.3:8b`, Apache-2.0) and the `qwen2.5:7b-instruct` and
+  `mistral-nemo:12b` overrides are all permissively licensed today. An
+  operator overriding to a non-permissive model (`llama3.1` variants
   under the Meta community license, for example) takes
   responsibility for that license fit.
 

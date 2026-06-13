@@ -150,7 +150,7 @@ comment describing its effect.
 | Key                                          | Default                               | Purpose                                                                |
 | -------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------- |
 | `gateway.image.repository`                   | `ghcr.io/opencost/opencost-ai-gateway`| Override for air-gap / private mirrors                                 |
-| `gateway.config.defaultModel`                | `qwen2.5:7b-instruct`                 | Default Ollama model; `mistral-nemo:12b` is the documented upgrade     |
+| `gateway.config.defaultModel`                | `granite3.3:8b`                       | Default Ollama model; `mistral-nemo:12b` is the documented upgrade     |
 | `gateway.config.auditLogQuery`               | `false`                               | **Do not flip without review** — opt-in to query capture in audit log  |
 | `gateway.auth.existingSecret`                | `""`                                  | Name of a pre-created Secret holding the bearer token                  |
 | `gateway.auth.create`                        | `false`                               | Render a chart-managed Secret; requires `gateway.auth.token`           |

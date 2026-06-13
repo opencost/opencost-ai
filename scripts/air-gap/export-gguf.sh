@@ -5,7 +5,7 @@
 #   export-gguf.sh <model-tag> <output-path>
 #
 # Example:
-#   export-gguf.sh qwen2.5:7b-instruct ./stage/qwen2.5-7b-instruct.gguf
+#   export-gguf.sh granite3.3:8b ./stage/granite3.3-8b.gguf
 #
 # The Ollama on-disk layout stores each model as a manifest plus a set
 # of sha256-addressed blobs. The manifest references one layer with
@@ -38,7 +38,7 @@ done
 # `ollama pull` on the caller's behalf — the whole point is that the
 # next step may run disconnected.
 if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fqx "${tag}"; then
-  # -F: tags contain regex metachars (e.g. qwen2.5:7b-instruct); fixed
+  # -F: tags contain regex metachars (e.g. granite3.3:8b); fixed
   # string match avoids false positives/negatives.
   echo "model tag not found locally: ${tag}" >&2
   echo "run: ollama pull ${tag}" >&2

@@ -9,7 +9,7 @@ import "time"
 // modelfile text). Breaking changes to this type require a /vN bump.
 type Model struct {
 	// Name is the fully-qualified model reference, e.g.
-	// "qwen2.5:7b-instruct". Stable across Ollama restarts.
+	// "granite3.3:8b". Stable across Ollama restarts.
 	Name string `json:"name"`
 
 	// Digest is Ollama's content hash of the model blob. Useful

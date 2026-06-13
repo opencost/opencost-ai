@@ -211,14 +211,15 @@ Tool use is the hard requirement; reasoning quality is secondary. Candidates and
 | Model | Size (Q4) | Tool use | Notes |
 |---|---|---|---|
 | `qwen2.5:0.5b` *(prototype default)* | 0.4 GB | Poor | CI smoke-test only; do not ship |
-| `qwen2.5:7b-instruct` *(v0.1 default)* | 4.7 GB | Good | Apache 2.0; ~6 GB VRAM floor |
+| `granite3.3:8b` *(default)* | 4.9 GB | Good | Apache 2.0; ~6 GB VRAM floor; tuned for tool/function calling |
+| `qwen2.5:7b-instruct` | 4.7 GB | Good | Apache 2.0; ~6 GB VRAM floor; documented override |
 | `llama3.1:8b-instruct` | 4.9 GB | Good | Meta Llama 3 Community License; documented override |
 | `mistral-nemo:12b` | 7.1 GB | Good | Apache 2.0; best reasoning, ~10 GB VRAM floor; documented upgrade path |
 
-Ship `qwen2.5:7b-instruct` as the default, exposed via Helm values key
-`ollama.defaultModel` so operators can substitute `mistral-nemo:12b` or
-`llama3.1:8b-instruct` without rebuilding. README states the VRAM/RAM
-floor for each option and lists the override command.
+Ship `granite3.3:8b` as the default, exposed via Helm values key
+`ollama.defaultModel` so operators can substitute `qwen2.5:7b-instruct`,
+`mistral-nemo:12b`, or `llama3.1:8b-instruct` without rebuilding. README
+states the VRAM/RAM floor for each option and lists the override command.
 
 ---
 
@@ -252,7 +253,7 @@ Response (non-streaming):
 ```json
 {
   "request_id": "uuid",
-  "model": "qwen2.5:7b-instruct",
+  "model": "granite3.3:8b",
   "query": "echoed",
   "answer": "markdown",
   "tool_calls": [
@@ -302,7 +303,7 @@ Constrains model behavior to:
 ```
 OPENCOST_AI_BRIDGE_URL         default: http://ollama-mcp-bridge:8000
 OPENCOST_AI_LISTEN_ADDR        default: :8080
-OPENCOST_AI_DEFAULT_MODEL      default: qwen2.5:7b-instruct
+OPENCOST_AI_DEFAULT_MODEL      default: granite3.3:8b
 OPENCOST_AI_REQUEST_TIMEOUT    default: 120s
 OPENCOST_AI_MAX_REQUEST_BYTES  default: 8192
 OPENCOST_AI_AUDIT_LOG_QUERY    default: false
@@ -407,14 +408,17 @@ treats these as settled and implements against them.
 4. **Helm chart home: `opencost-ai` repo** (this repo). Separate release
    cadence from OpenCost core. Migration to `opencost-helm-chart` is
    deferred to v1.0 and out of scope.
-5. **Default model: `qwen2.5:7b-instruct` with Helm override.** Values
+5. **Default model: `granite3.3:8b` with Helm override.** Values
    key `ollama.defaultModel` lets operators substitute
-   `mistral-nemo:12b` (better reasoning, ~10 GB VRAM floor) or
-   `llama3.1:8b-instruct` without rebuilding. README states the VRAM
-   floor (~6 GB for the 7B default, ~10 GB for the 12B upgrade) and
-   lists the override command. `mistral-nemo:12b` is the documented
-   upgrade path for operators with headroom. No bundled-weights
-   licensing check is needed because all three candidates are Apache 2.0.
+   `qwen2.5:7b-instruct`, `mistral-nemo:12b` (better reasoning, ~10 GB
+   VRAM floor), or `llama3.1:8b-instruct` without rebuilding. README
+   states the VRAM floor (~6 GB for the 8B default, ~10 GB for the 12B
+   upgrade) and lists the override command. `mistral-nemo:12b` is the
+   documented upgrade path for operators with headroom. The default
+   `granite3.3:8b` is Apache 2.0, as are the `qwen2.5:7b-instruct` and
+   `mistral-nemo:12b` overrides; only `llama3.1:8b-instruct` ships under
+   the Meta Llama 3 Community License, which operators selecting it must
+   accept.
 
 ---
 

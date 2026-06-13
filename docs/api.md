@@ -116,7 +116,7 @@ Request body (`apiv1.AskRequest`):
 ```json
 {
   "query": "what did the platform namespace spend yesterday?",
-  "model": "qwen2.5:7b-instruct",
+  "model": "granite3.3:8b",
   "stream": false,
   "conversation_id": "550e8400-e29b-41d4-a716-446655440000"
 }
@@ -139,7 +139,7 @@ intentionally absent in v0.1; see §11.4 of the architecture doc.
 ```json
 {
   "request_id": "0a1b2c3d4e5f6789",
-  "model": "qwen2.5:7b-instruct",
+  "model": "granite3.3:8b",
   "query": "what did the platform namespace spend yesterday?",
   "answer": "Yesterday the `platform` namespace spent **$42.17** …",
   "tool_calls": [
@@ -192,7 +192,7 @@ event: token
 data: {"text":"`platform` namespace spent **$42.17** "}
 
 event: done
-data: {"request_id":"0a1b2c3d4e5f6789","model":"qwen2.5:7b-instruct","usage":{"prompt_tokens":412,"completion_tokens":187},"latency_ms":1843}
+data: {"request_id":"0a1b2c3d4e5f6789","model":"granite3.3:8b","usage":{"prompt_tokens":412,"completion_tokens":187},"latency_ms":1843}
 ```
 
 Headers set on the streaming response:
@@ -241,16 +241,16 @@ Lists Ollama models reachable through the bridge. Proxies
 {
   "models": [
     {
-      "name": "qwen2.5:7b-instruct",
+      "name": "granite3.3:8b",
       "digest": "sha256:...",
-      "size": 4683073395,
+      "size": 4942043136,
       "modified_at": "2026-04-15T10:22:03Z",
-      "family": "qwen2",
-      "parameter_size": "7B",
+      "family": "granite",
+      "parameter_size": "8B",
       "quantization": "Q4_K_M"
     }
   ],
-  "default": "qwen2.5:7b-instruct"
+  "default": "granite3.3:8b"
 }
 ```
 

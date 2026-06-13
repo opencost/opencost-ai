@@ -9,6 +9,17 @@ gateway release that ships them, referencing the prompt version tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Default model is now `granite3.3:8b` (Apache 2.0, tuned for
+  tool/function calling), replacing `qwen2.5:7b-instruct`. The change
+  is config-only — `OPENCOST_AI_DEFAULT_MODEL` /
+  `gateway.config.defaultModel` — with no gateway code-path changes.
+  `qwen2.5:7b-instruct` remains a documented, supported override
+  alongside `mistral-nemo:12b` and `llama3.1:8b-instruct`. Air-gap
+  installs must stage the `granite3.3:8b` weights onto the Ollama PVC;
+  see `docs/air-gap-install.md`.
+
 ### Governance
 
 - Adopted upstream opencost's branch model: `develop` is the

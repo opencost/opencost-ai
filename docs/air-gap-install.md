@@ -18,7 +18,7 @@ install:
    from this repo.
 2. The **bridge** image (`ghcr.io/jonigl/ollama-mcp-bridge`), upstream.
 3. The **Ollama** runtime image (`ollama/ollama`), upstream.
-4. The **model weights** (`qwen2.5:7b-instruct` by default), packaged
+4. The **model weights** (`granite3.3:8b` by default), packaged
    as a GGUF file wrapped in an OCI artefact.
 
 The output is a `helm install` against the chart in
@@ -94,14 +94,14 @@ ORAS at.
 
 ```sh
 # 1. Pull on a machine with internet access.
-ollama pull qwen2.5:7b-instruct
+ollama pull granite3.3:8b
 
 # 2. Locate the GGUF blob that backs the manifest. Ollama stores blobs
 #    under $HOME/.ollama/models/blobs/ as sha256-<hex> filenames on
 #    disk (the colon from the digest is replaced with a dash); the
 #    manifest under $HOME/.ollama/models/manifests/ references the
 #    layer whose mediaType is application/vnd.ollama.image.model.
-./scripts/air-gap/export-gguf.sh qwen2.5:7b-instruct ./stage/qwen2.5-7b-instruct.gguf
+./scripts/air-gap/export-gguf.sh granite3.3:8b ./stage/granite3.3-8b.gguf
 
 # 3. Push the GGUF to the internal registry as an OCI artefact. The
 #    reference uses an `ollama-model/` path prefix by convention so
@@ -178,8 +178,8 @@ this into a real `values.yaml`:
 # ollama:
 #   modelBootstrap:
 #     enabled: true
-#     ociRef: registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest
-#     modelName: qwen2.5:7b-instruct
+#     ociRef: registry.internal.example/ollama-model/granite3.3-8b:latest
+#     modelName: granite3.3:8b
 ```
 
 When this ships, the Job will borrow the Ollama image (already has
@@ -198,10 +198,10 @@ pre-baked CSI snapshots), skip the Job entirely:
 # the pulled artefact (the push side preserves the operator-supplied
 # basename) and synthesises one if the artefact has none, so this
 # does not break when the source filename was, say,
-# `qwen2.5-7b-instruct.Modelfile`.
+# `granite3.3-8b.Modelfile`.
 scripts/air-gap/oras-pull-model.sh \
-  registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest \
-  qwen2.5:7b-instruct
+  registry.internal.example/ollama-model/granite3.3-8b:latest \
+  granite3.3:8b
 # Ollama writes the registered model into $HOME/.ollama which HOME is
 # relocated to /var/lib/ollama by the StatefulSet (see
 # deploy/helm/opencost-ai/templates/ollama-statefulset.yaml).
@@ -212,7 +212,7 @@ chart:
 
 ```sh
 kubectl -n opencost-ai exec pod/ollama-model-loader -- \
-  ollama list | grep qwen2.5:7b-instruct
+  ollama list | grep granite3.3:8b
 ```
 
 ## Step 4 — Install the chart with mirrored images
@@ -396,12 +396,12 @@ standard `nvidia.com/gpu: 1` resource request under
 
 ### Licensing
 
-`qwen2.5:7b-instruct`, `mistral-nemo:12b`, and `llama3.1:8b-instruct`
-are all redistributable under their respective licences (Apache 2.0,
-Apache 2.0, and Meta Llama 3 Community License) — shipping the weights
-into a private registry is covered by each. Teams pushing other
-models are responsible for confirming the licence terms of their
-chosen weights before mirroring.
+`granite3.3:8b`, `qwen2.5:7b-instruct`, `mistral-nemo:12b`, and
+`llama3.1:8b-instruct` are all redistributable under their respective
+licences (Apache 2.0, Apache 2.0, Apache 2.0, and Meta Llama 3
+Community License) — shipping the weights into a private registry is
+covered by each. Teams pushing other models are responsible for
+confirming the licence terms of their chosen weights before mirroring.
 
 ### What is explicitly not supported in v0.1
 
@@ -424,8 +424,8 @@ Cross-reference with `docs/architecture.md` §10:
 - Decision 1/2: **MCP transport is `streamable_http`.** The bridge
   config rendered by the chart already uses this, no air-gap-specific
   change.
-- Decision 5: **Default model is `qwen2.5:7b-instruct`.** The VRAM
-  floor (~6 GB for 7B-Q4, ~10 GB for `mistral-nemo:12b`) determines
+- Decision 5: **Default model is `granite3.3:8b`.** The VRAM
+  floor (~6 GB for 8B-Q4, ~10 GB for `mistral-nemo:12b`) determines
   node sizing on the cluster side and Helm `ollama.resources.limits`
   values.
 

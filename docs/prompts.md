@@ -259,7 +259,7 @@ the audit log.
 
 The prompt is reviewed at every gateway minor release and any time
 a model-family change is considered (e.g. swapping the default
-from `qwen2.5:7b-instruct` to `mistral-nemo:12b`). The review
+from `granite3.3:8b` to `mistral-nemo:12b`). The review
 answer at least these questions:
 
 1. Did any clause in the prompt measurably improve behaviour on

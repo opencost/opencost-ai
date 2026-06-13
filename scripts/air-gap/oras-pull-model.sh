@@ -6,8 +6,8 @@
 #
 # Example:
 #   oras-pull-model.sh \
-#     registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest \
-#     qwen2.5:7b-instruct
+#     registry.internal.example/ollama-model/granite3.3-8b:latest \
+#     granite3.3:8b
 #
 # Intended to run:
 #   - Inside the in-cluster model-bootstrap Job (see
@@ -97,5 +97,5 @@ fi
 
 echo "registered ${tag} from ${ref}"
 # awk equality on the first column — tags contain regex metachars
-# (e.g. qwen2.5:...) so a grep -E pattern would be a hazard.
+# (e.g. granite3.3:...) so a grep -E pattern would be a hazard.
 ollama list | awk -v tag="${tag}" 'NR>1 && $1 == tag' || true

@@ -58,10 +58,10 @@ gateway:
   # Environment configuration maps 1:1 to docs/architecture.md §7.7.
   config:
     # OPENCOST_AI_DEFAULT_MODEL. The README lists the VRAM floor for
-    # each supported value (qwen2.5:7b-instruct is the documented
-    # default; mistral-nemo:12b and llama3.1:8b-instruct are supported
-    # overrides).
-    defaultModel: "qwen2.5:7b-instruct"
+    # each supported value (granite3.3:8b is the documented default;
+    # qwen2.5:7b-instruct, mistral-nemo:12b and llama3.1:8b-instruct are
+    # supported overrides).
+    defaultModel: "granite3.3:8b"
     # OPENCOST_AI_REQUEST_TIMEOUT — per-request deadline.
     requestTimeout: "120s"
     # OPENCOST_AI_MAX_REQUEST_BYTES — envelope ceiling.
