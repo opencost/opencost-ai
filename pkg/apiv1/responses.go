@@ -9,7 +9,7 @@ import "time"
 // modelfile text). Breaking changes to this type require a /vN bump.
 type Model struct {
 	// Name is the fully-qualified model reference, e.g.
-	// "qwen2.5:7b-instruct". Stable across Ollama restarts.
+	// "granite4.1:8b". Stable across Ollama restarts.
 	Name string `json:"name"`
 
 	// Digest is Ollama's content hash of the model blob. Useful
@@ -24,12 +24,12 @@ type Model struct {
 	// locally. RFC 3339 formatted on the wire.
 	ModifiedAt time.Time `json:"modified_at,omitempty"`
 
-	// Family is Ollama's coarse architecture label (e.g. "qwen2",
+	// Family is Ollama's coarse architecture label (e.g. "granite",
 	// "llama", "mistral"). Optional because some Ollama versions
 	// omit it on older pulled models.
 	Family string `json:"family,omitempty"`
 
-	// ParameterSize is a human-readable size label like "7B".
+	// ParameterSize is a human-readable size label like "8B".
 	ParameterSize string `json:"parameter_size,omitempty"`
 
 	// Quantization is the compression scheme in use, e.g. "Q4_K_M".

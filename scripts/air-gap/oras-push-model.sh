@@ -6,8 +6,8 @@
 #
 # Example:
 #   oras-push-model.sh \
-#     registry.internal.example/ollama-model/qwen2.5-7b-instruct:latest \
-#     ./stage/qwen2.5-7b-instruct.gguf
+#     registry.internal.example/ollama-model/granite4.1-8b:latest \
+#     ./stage/granite4.1-8b.gguf
 #
 # Artefact layout:
 #   manifest (application/vnd.oci.image.manifest.v1+json)

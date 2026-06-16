@@ -206,19 +206,22 @@ Go, not Python, because:
 
 ### 6.3 Model recommendation for v0.1 defaults
 
-Tool use is the hard requirement; reasoning quality is secondary. Candidates and trade-offs:
+Tool use is the hard requirement; reasoning quality is secondary. The
+IBM Granite family is the chosen line: every published tag is Apache
+2.0 (so no per-weight licensing check is needed), and the instruct
+models support native tool calling and structured JSON output.
+Candidates and trade-offs:
 
 | Model | Size (Q4) | Tool use | Notes |
 |---|---|---|---|
-| `qwen2.5:0.5b` *(prototype default)* | 0.4 GB | Poor | CI smoke-test only; do not ship |
-| `qwen2.5:7b-instruct` *(v0.1 default)* | 4.7 GB | Good | Apache 2.0; ~6 GB VRAM floor |
-| `llama3.1:8b-instruct` | 4.9 GB | Good | Meta Llama 3 Community License; documented override |
-| `mistral-nemo:12b` | 7.1 GB | Good | Apache 2.0; best reasoning, ~10 GB VRAM floor; documented upgrade path |
+| `granite4.1:3b` *(CI smoke default)* | ~2 GB | Fair | Apache 2.0; smallest Granite — CI/plumbing only, below the production tool-use bar |
+| `granite4.1:8b` *(v0.1 default)* | ~5 GB | Good | Apache 2.0; ~7 GB VRAM floor |
+| `granite4.1:30b` | ~18 GB | Best | Apache 2.0; hybrid MoE, best reasoning, ~18 GB VRAM floor; documented upgrade path |
 
-Ship `qwen2.5:7b-instruct` as the default, exposed via Helm values key
-`ollama.defaultModel` so operators can substitute `mistral-nemo:12b` or
-`llama3.1:8b-instruct` without rebuilding. README states the VRAM/RAM
-floor for each option and lists the override command.
+Ship `granite4.1:8b` as the default, exposed via Helm values key
+`ollama.defaultModel` so operators with headroom can substitute
+`granite4.1:30b` without rebuilding. README states the VRAM/RAM floor
+for each option and lists the override command.
 
 ---
 
@@ -252,7 +255,7 @@ Response (non-streaming):
 ```json
 {
   "request_id": "uuid",
-  "model": "qwen2.5:7b-instruct",
+  "model": "granite4.1:8b",
   "query": "echoed",
   "answer": "markdown",
   "tool_calls": [
@@ -302,7 +305,7 @@ Constrains model behavior to:
 ```
 OPENCOST_AI_BRIDGE_URL         default: http://ollama-mcp-bridge:8000
 OPENCOST_AI_LISTEN_ADDR        default: :8080
-OPENCOST_AI_DEFAULT_MODEL      default: qwen2.5:7b-instruct
+OPENCOST_AI_DEFAULT_MODEL      default: granite4.1:8b
 OPENCOST_AI_REQUEST_TIMEOUT    default: 120s
 OPENCOST_AI_MAX_REQUEST_BYTES  default: 8192
 OPENCOST_AI_AUDIT_LOG_QUERY    default: false
@@ -377,7 +380,7 @@ Sized for Warwick's TAU methodology (1 BE + 2 FE-capable contributors), but FE w
 
 | Week | Work |
 |---|---|
-| 1 | Scaffold Go gateway; CI/CD; distroless image; cosign signing; integration test harness (kind + OpenCost + bridge + Ollama with `qwen2.5:0.5b` smoke model). |
+| 1 | Scaffold Go gateway; CI/CD; distroless image; cosign signing; integration test harness (kind + OpenCost + bridge + Ollama with `granite4.1:3b` smoke model). |
 | 2 | `POST /v1/ask` happy path against the bridge. System prompt + guardrails. Problem+json errors. Bearer-token auth + token-file watcher. |
 | 3 | Streaming SSE. Rate limit. Audit log. Prometheus metrics. |
 | 4 | Helm chart: gateway + bridge + Ollama with PVC. NetworkPolicy. PodSecurity. ServiceMonitor. |
@@ -407,14 +410,14 @@ treats these as settled and implements against them.
 4. **Helm chart home: `opencost-ai` repo** (this repo). Separate release
    cadence from OpenCost core. Migration to `opencost-helm-chart` is
    deferred to v1.0 and out of scope.
-5. **Default model: `qwen2.5:7b-instruct` with Helm override.** Values
+5. **Default model: `granite4.1:8b` with Helm override.** Values
    key `ollama.defaultModel` lets operators substitute
-   `mistral-nemo:12b` (better reasoning, ~10 GB VRAM floor) or
-   `llama3.1:8b-instruct` without rebuilding. README states the VRAM
-   floor (~6 GB for the 7B default, ~10 GB for the 12B upgrade) and
-   lists the override command. `mistral-nemo:12b` is the documented
+   `granite4.1:30b` (better reasoning, hybrid MoE, ~18 GB VRAM floor)
+   or the smaller `granite4.1:3b` without rebuilding. README states the
+   VRAM floor (~7 GB for the 8B default, ~18 GB for the 30B upgrade)
+   and lists the override command. `granite4.1:30b` is the documented
    upgrade path for operators with headroom. No bundled-weights
-   licensing check is needed because all three candidates are Apache 2.0.
+   licensing check is needed because every Granite tag is Apache 2.0.
 
 ---
 

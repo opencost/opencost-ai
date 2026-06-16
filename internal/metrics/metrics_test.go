@@ -24,8 +24,8 @@ func TestRegistry_ExposesDocumentedFamilies(t *testing.T) {
 	r.InFlight().Inc()
 	r.ToolCalls().WithLabelValues("opencost.allocation").Inc()
 	r.ToolDuration().WithLabelValues("opencost.allocation").Observe(0.05)
-	r.ModelTokens().WithLabelValues("qwen2.5:7b-instruct", "prompt").Add(123)
-	r.ModelTokens().WithLabelValues("qwen2.5:7b-instruct", "completion").Add(45)
+	r.ModelTokens().WithLabelValues("granite4.1:8b", "prompt").Add(123)
+	r.ModelTokens().WithLabelValues("granite4.1:8b", "completion").Add(45)
 	r.UpstreamErrors().WithLabelValues("chat", "transport").Inc()
 	r.RateLimited().Inc()
 
@@ -64,7 +64,7 @@ func TestRegistry_ExposesDocumentedFamilies(t *testing.T) {
 		`opencost_ai_gateway_request_duration_seconds_count{endpoint="/v1/ask",method="POST"} 1`,
 		`opencost_ai_gateway_requests_in_flight 1`,
 		`opencost_ai_gateway_tool_calls_total{tool="opencost.allocation"} 1`,
-		`opencost_ai_gateway_model_tokens_total{kind="prompt",model="qwen2.5:7b-instruct"} 123`,
+		`opencost_ai_gateway_model_tokens_total{kind="prompt",model="granite4.1:8b"} 123`,
 		`opencost_ai_gateway_upstream_errors_total{kind="transport",op="chat"} 1`,
 		`opencost_ai_gateway_rate_limited_total 1`,
 	}

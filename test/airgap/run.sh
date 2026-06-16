@@ -203,7 +203,7 @@ docker push "${LOCAL_PUSH_REF}"
 if [[ "${MIRROR_UPSTREAM}" -eq 1 ]]; then
   echo "==> mirroring upstream bridge + ollama images"
   CRANE_INSECURE=1 "${REPO_ROOT}/scripts/air-gap/mirror-images.sh" \
-    "ollama/ollama:0.6.0=localhost:${REGISTRY_PORT}/ollama:0.6.0" \
+    "ollama/ollama:0.30.8=localhost:${REGISTRY_PORT}/ollama:0.30.8" \
     "ghcr.io/jonigl/ollama-mcp-bridge:latest=localhost:${REGISTRY_PORT}/ollama-mcp-bridge:airgap-e2e"
 fi
 

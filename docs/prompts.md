@@ -137,7 +137,7 @@ Version: opencost-ai-prompt/v0.1
 > one short sentence what you are about to ask it and why … do not
 > substitute a different tool that answers a different question."*
 
-- **Bias toward tools.** Small models (qwen2.5:7b, the v0.1
+- **Bias toward tools.** Small models (granite4.1:8b, the v0.1
   default) frequently skip tool calls when the answer "feels"
   derivable from context. This instruction compensates.
 - **Pre-call narration.** Asking the model to narrate its tool
@@ -223,7 +223,7 @@ Version: opencost-ai-prompt/v0.1
 - **No example queries or few-shot demonstrations.** Few-shot in
   the system prompt biases answers toward the example shape and
   eats context before the user's question starts. Both are
-  expensive on a 7B model. Examples belong in the README for
+  expensive on an 8B model. Examples belong in the README for
   humans, not in the prompt for the model.
 - **No explicit JSON-output instruction.** The v0.1
   `AskResponse.answer` field is a markdown string (see
@@ -259,7 +259,7 @@ the audit log.
 
 The prompt is reviewed at every gateway minor release and any time
 a model-family change is considered (e.g. swapping the default
-from `qwen2.5:7b-instruct` to `mistral-nemo:12b`). The review
+from `granite4.1:8b` to `granite4.1:30b`). The review
 answer at least these questions:
 
 1. Did any clause in the prompt measurably improve behaviour on
@@ -269,7 +269,7 @@ answer at least these questions:
    clauses.)
 3. Does the prompt still fit comfortably in the default context
    window alongside the bridge's tool definitions and a typical
-   user question? The current text is ~450 tokens; the 7B
+   user question? The current text is ~450 tokens; the 8B
    default's effective context is much larger, so this is
    headroom today and a constraint to watch when smaller models
    are evaluated.

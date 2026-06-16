@@ -10,7 +10,7 @@ func TestAskRequest_JSONRoundTrip(t *testing.T) {
 	t.Parallel()
 	in := AskRequest{
 		Query:          "what did my namespace cost yesterday?",
-		Model:          "qwen2.5:7b-instruct",
+		Model:          "granite4.1:8b",
 		Stream:         true,
 		ConversationID: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
 	}
@@ -50,7 +50,7 @@ func TestAskResponse_MarshalShape(t *testing.T) {
 	t.Parallel()
 	resp := AskResponse{
 		RequestID: "11111111-1111-1111-1111-111111111111",
-		Model:     "qwen2.5:7b-instruct",
+		Model:     "granite4.1:8b",
 		Query:     "q",
 		Answer:    "a",
 		ToolCalls: []ToolCall{{

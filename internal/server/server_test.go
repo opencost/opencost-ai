@@ -76,7 +76,7 @@ func newTestServer(t *testing.T, fb *fakeBridge, opts ...func(*Options)) (*httpt
 	t.Helper()
 	if fb == nil {
 		fb = &fakeBridge{chatResp: &bridge.ChatResponse{
-			Model:   "qwen2.5:7b-instruct",
+			Model:   "granite4.1:8b",
 			Message: bridge.Message{Role: "assistant", Content: "answer"},
 			Done:    true,
 		}}
@@ -84,7 +84,7 @@ func newTestServer(t *testing.T, fb *fakeBridge, opts ...func(*Options)) (*httpt
 	o := Options{
 		Bridge:          fb,
 		AuthValidator:   fakeValidator{expect: "secret"},
-		DefaultModel:    "qwen2.5:7b-instruct",
+		DefaultModel:    "granite4.1:8b",
 		MaxRequestBytes: 8192,
 		Logger:          discardLogger(),
 		Audit:           audit.NewLogger(io.Discard, false),
@@ -250,7 +250,7 @@ func TestAllEndpoints_RejectBadToken(t *testing.T) {
 func TestAsk_HappyPath(t *testing.T) {
 	t.Parallel()
 	fb := &fakeBridge{chatResp: &bridge.ChatResponse{
-		Model: "qwen2.5:7b-instruct",
+		Model: "granite4.1:8b",
 		Message: bridge.Message{
 			Role: "assistant", Content: "your cluster cost $42",
 			ToolCalls: []bridge.ToolCall{{
@@ -288,7 +288,7 @@ func TestAsk_HappyPath(t *testing.T) {
 	if got.Answer != "your cluster cost $42" {
 		t.Errorf("answer = %q", got.Answer)
 	}
-	if got.Model != "qwen2.5:7b-instruct" {
+	if got.Model != "granite4.1:8b" {
 		t.Errorf("model = %q", got.Model)
 	}
 	if got.Usage.PromptTokens != 123 || got.Usage.CompletionTokens != 45 {
@@ -300,7 +300,7 @@ func TestAsk_HappyPath(t *testing.T) {
 	if got.RequestID == "" {
 		t.Errorf("request_id not populated")
 	}
-	if fb.lastChatReq.Model != "qwen2.5:7b-instruct" {
+	if fb.lastChatReq.Model != "granite4.1:8b" {
 		t.Errorf("bridge not given default model: %q", fb.lastChatReq.Model)
 	}
 	if fb.lastChatReq.Stream {
@@ -313,16 +313,16 @@ func TestAsk_HappyPath(t *testing.T) {
 
 func TestAsk_UsesRequestModelOverride(t *testing.T) {
 	t.Parallel()
-	fb := &fakeBridge{chatResp: &bridge.ChatResponse{Model: "mistral-nemo:12b", Done: true}}
+	fb := &fakeBridge{chatResp: &bridge.ChatResponse{Model: "granite4.1:30b", Done: true}}
 	srv, _ := newTestServer(t, fb)
 	resp := postJSON(t, srv, "/v1/ask", "secret", apiv1.AskRequest{
-		Query: "hi", Model: "mistral-nemo:12b",
+		Query: "hi", Model: "granite4.1:30b",
 	})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	if fb.lastChatReq.Model != "mistral-nemo:12b" {
+	if fb.lastChatReq.Model != "granite4.1:30b" {
 		t.Errorf("model override ignored: %q", fb.lastChatReq.Model)
 	}
 }
@@ -562,14 +562,14 @@ func TestModels_HappyPath(t *testing.T) {
 	t.Parallel()
 	fb := &fakeBridge{modelsResp: []bridge.TagModel{
 		{
-			Name:   "qwen2.5:7b-instruct",
+			Name:   "granite4.1:8b",
 			Digest: "sha256:abc",
 			Size:   4_700_000_000,
 			Details: bridge.ModelDetails{
-				Family: "qwen2", ParameterSize: "7B", QuantizationLevel: "Q4_K_M",
+				Family: "granite", ParameterSize: "8B", QuantizationLevel: "Q4_K_M",
 			},
 		},
-		{Name: "llama3.1:8b-instruct"},
+		{Name: "granite4.1:3b"},
 	}}
 	srv, _ := newTestServer(t, fb)
 
@@ -585,13 +585,13 @@ func TestModels_HappyPath(t *testing.T) {
 	if len(got.Models) != 2 {
 		t.Fatalf("len = %d, want 2", len(got.Models))
 	}
-	if got.Models[0].Name != "qwen2.5:7b-instruct" {
+	if got.Models[0].Name != "granite4.1:8b" {
 		t.Errorf("first model name = %q", got.Models[0].Name)
 	}
-	if got.Models[0].Family != "qwen2" {
+	if got.Models[0].Family != "granite" {
 		t.Errorf("first model family = %q", got.Models[0].Family)
 	}
-	if got.Default != "qwen2.5:7b-instruct" {
+	if got.Default != "granite4.1:8b" {
 		t.Errorf("default = %q", got.Default)
 	}
 }
