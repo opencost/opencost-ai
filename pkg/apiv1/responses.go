@@ -29,7 +29,7 @@ type Model struct {
 	// omit it on older pulled models.
 	Family string `json:"family,omitempty"`
 
-	// ParameterSize is a human-readable size label like "7B".
+	// ParameterSize is a human-readable size label like "8B".
 	ParameterSize string `json:"parameter_size,omitempty"`
 
 	// Quantization is the compression scheme in use, e.g. "Q4_K_M".

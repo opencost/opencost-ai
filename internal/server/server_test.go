@@ -566,7 +566,7 @@ func TestModels_HappyPath(t *testing.T) {
 			Digest: "sha256:abc",
 			Size:   4_700_000_000,
 			Details: bridge.ModelDetails{
-				Family: "granite", ParameterSize: "7B", QuantizationLevel: "Q4_K_M",
+				Family: "granite", ParameterSize: "8B", QuantizationLevel: "Q4_K_M",
 			},
 		},
 		{Name: "granite4.1:3b"},

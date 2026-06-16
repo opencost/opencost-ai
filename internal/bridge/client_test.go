@@ -328,7 +328,7 @@ func TestModels_Success(t *testing.T) {
 					Details: ModelDetails{
 						Format:            "gguf",
 						Family:            "granite",
-						ParameterSize:     "7B",
+						ParameterSize:     "8B",
 						QuantizationLevel: "Q4_K_M",
 					},
 				},

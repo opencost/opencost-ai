@@ -243,7 +243,7 @@ ollama:
 
   image:
     repository: ollama/ollama
-    tag: "0.6.0"
+    tag: "0.30.8"
     pullPolicy: IfNotPresent
     digest: ""
 
@@ -253,7 +253,7 @@ ollama:
     annotations: {}
 
   # PVC for the model cache. Models can be multiple GB; sizing here is
-  # for a single 7B-Q4 model plus overhead. Override for larger models
+  # for a single 8B-Q4 model plus overhead. Override for larger models
   # or multi-model deployments.
   persistence:
     enabled: true

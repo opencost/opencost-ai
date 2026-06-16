@@ -59,7 +59,7 @@ Three rules the design enforces:
 
 ### On the connected staging host
 
-- `ollama` ≥ 0.6.0 (for the default model tag line)
+- `ollama` ≥ 0.30.8 (Granite 4.x needs a recent hybrid-model-capable runtime)
 - `oras` ≥ 1.2
 - `crane` (go-containerregistry) for lossless image copy
 - `cosign` ≥ 2.4 (optional, recommended for verification pre-push)
@@ -138,14 +138,14 @@ installs).
 ```sh
 SRC_GATEWAY=ghcr.io/opencost/opencost-ai-gateway:v0.1.0
 SRC_BRIDGE=ghcr.io/jonigl/ollama-mcp-bridge:v0.2.0
-SRC_OLLAMA=ollama/ollama:0.6.0
+SRC_OLLAMA=ollama/ollama:0.30.8
 
 DST=registry.internal.example/opencost-ai
 
 ./scripts/air-gap/mirror-images.sh \
   "${SRC_GATEWAY}=${DST}/opencost-ai-gateway:v0.1.0" \
   "${SRC_BRIDGE}=${DST}/ollama-mcp-bridge:v0.2.0" \
-  "${SRC_OLLAMA}=${DST}/ollama:0.6.0"
+  "${SRC_OLLAMA}=${DST}/ollama:0.30.8"
 ```
 
 The script uses `crane copy` and prints the destination digest for
@@ -241,7 +241,7 @@ bridge:
 ollama:
   image:
     repository: registry.internal.example/opencost-ai/ollama
-    tag: "0.6.0"
+    tag: "0.30.8"
     digest: sha256:...
   persistence:
     storageClassName: "internal-block"    # explicit, not default

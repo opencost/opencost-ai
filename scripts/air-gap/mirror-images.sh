@@ -9,7 +9,7 @@
 #   mirror-images.sh \
 #     ghcr.io/opencost/opencost-ai-gateway:v0.1.0=registry.internal.example/opencost-ai/opencost-ai-gateway:v0.1.0 \
 #     ghcr.io/jonigl/ollama-mcp-bridge:v0.2.0=registry.internal.example/opencost-ai/ollama-mcp-bridge:v0.2.0 \
-#     ollama/ollama:0.6.0=registry.internal.example/opencost-ai/ollama:0.6.0
+#     ollama/ollama:0.30.8=registry.internal.example/opencost-ai/ollama:0.30.8
 #
 # For doubly-isolated environments (staging host cannot reach the
 # internal registry), set OCI_LAYOUT=/path/to/layout to drop the
