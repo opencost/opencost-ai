@@ -1,21 +1,29 @@
-# opencost-ai Committers and Maintainers
+# OpenCost Committers and Maintainers
 
-Official list of opencost-ai Maintainers. opencost-ai Committers are granted Triage permissions for the opencost-ai repository. The [GOVERNANCE.md](GOVERNANCE.md) describes the process for becoming a committer and maintainer of the project.
+Official list of [OpenCost Maintainers](https://github.com/orgs/opencost/teams/opencost-maintainers) and [OpenCost Community Maintainers](https://github.com/orgs/opencost/teams/opencost-community-maintainers). [OpenCost Committers](https://github.com/orgs/opencost/teams/opencost-committers) are granted Triage permissions for the OpenCost repositories. The [GOVERNANCE.md](https://github.com/opencost/opencost/blob/develop/GOVERNANCE.md) describes the process for becoming a committer and maintainer of the project.
 
 ## Maintainers
 
 | Maintainer | GitHub ID | Affiliation | Email |
 | --------------- | --------- | ----------- | ----------- |
-| Warwick Peatey | @peatey | Automatic Systems | <warwick@automatic.systems> |
+| Ajay Tripathy | @AjayTripathy | IBM | <ajay.tripathy@ibm.com> |
+| Alex Meijer | @ameijer | IBM | <alexander.meijer@ibm.com> |
+| Artur Khantimirov | @r2k1 | Microsoft | <akhantimirov@microsoft.com> |
+| Christian Petersen | @cpetersen5 | IBM | <Christian.Petersen2@ibm.com> |
+| Matt Bolt | @​mbolt35 | IBM | <matthew.bolt@ibm.com> |
+| Niko Kovacevic | @nikovacevic | IBM | <Nicholas.Kovacevic@ibm.com> |
+| Sean Holcomb | @Sean-Holcomb | IBM | <sean.holcomb@ibm.com> |
+| Warwick Peatey | @peatey | IBM | <warwick.peatey@ibm.com> |
 
 ## Community Maintainers
 
-_None yet. opencost-ai is a new sub-project; community maintainer nominations follow the process in [GOVERNANCE.md](GOVERNANCE.md)._
+| Maintainer | GitHub ID | Affiliation | Email |
+| --------------- | --------- | ----------- | ----------- |
+| Rajith Attapattu| @rajith77 | Randoli | <rajith@randoli.ca> |
 
 ## Sub Project Maintainers
 
-_None._
-
-## opencost-ai Emeritus Committers
-
-_None yet._
+### opencost-integration-tests
+| Maintainer | GitHub ID | Affiliation | Email |
+| --------------- | --------- | ----------- | ----------- |
+| Manas Sivakumar | @Manas23601 |  | <manas23601@gmail.com> |
