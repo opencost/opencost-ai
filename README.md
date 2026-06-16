@@ -25,10 +25,12 @@ client  →  opencost-ai-gateway  →  ollama-mcp-bridge  →  Ollama
                                                        →  OpenCost MCP :8081
 ```
 
-The gateway adds authentication, audit, rate limiting, prompt
-guardrails, and a stable `/v1/*` HTTP contract around the
-intentionally-unauthenticated Ollama `/api/chat` surface exposed by
-the bridge.
+The gateway adds authentication, audit, rate limiting, and a stable
+`/v1/*` HTTP contract around the intentionally-unauthenticated Ollama
+`/api/chat` surface exposed by the bridge. Prompt guardrails (a system
+prompt scoping the model to OpenCost questions) are specified in
+`docs/prompts.md` but are not injected at runtime in v0.1; that ships
+in v0.2 (see `docs/architecture.md` §11.3).
 
 ## What this is not
 
@@ -100,6 +102,8 @@ Apache-2.0. See `LICENSE`.
 
 ## Contributing
 
-See `CONTRIBUTING.md` for DCO sign-off, GPG-signed commits, branch and
-commit conventions, and the security checklist. Security issues go
-through `SECURITY.md`, not the public issue tracker.
+See `CONTRIBUTING.md` for DCO sign-off (the only commit gate — GPG
+signing is not required), branch and commit conventions, and the
+security checklist; `GOVERNANCE.md` and `MAINTAINERS.md` cover project
+roles and the decision process. Security issues go through
+`SECURITY.md`, not the public issue tracker.
