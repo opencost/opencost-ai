@@ -145,14 +145,14 @@ func TestChat_Success(t *testing.T) {
 			if req.Stream {
 				t.Errorf("stream must be forced to false, got true")
 			}
-			if req.Model != "qwen2.5:7b-instruct" {
+			if req.Model != "granite4.1:8b" {
 				t.Errorf("model = %q", req.Model)
 			}
 			if len(req.Messages) != 1 || req.Messages[0].Content != "hello" {
 				t.Errorf("messages = %+v", req.Messages)
 			}
 			_ = json.NewEncoder(w).Encode(ChatResponse{
-				Model:           "qwen2.5:7b-instruct",
+				Model:           "granite4.1:8b",
 				CreatedAt:       time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC),
 				Message:         Message{Role: "assistant", Content: "hi back"},
 				Done:            true,
@@ -165,7 +165,7 @@ func TestChat_Success(t *testing.T) {
 	c := mustClient(t, srv.URL)
 
 	resp, err := c.Chat(context.Background(), ChatRequest{
-		Model:    "qwen2.5:7b-instruct",
+		Model:    "granite4.1:8b",
 		Messages: []Message{{Role: "user", Content: "hello"}},
 		Stream:   true, // client must override this
 	})
@@ -320,14 +320,14 @@ func TestModels_Success(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(tagsResponse{
 			Models: []TagModel{
 				{
-					Name:       "qwen2.5:7b-instruct",
-					Model:      "qwen2.5:7b-instruct",
+					Name:       "granite4.1:8b",
+					Model:      "granite4.1:8b",
 					ModifiedAt: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 					Size:       4_700_000_000,
 					Digest:     "sha256:abc",
 					Details: ModelDetails{
 						Format:            "gguf",
-						Family:            "qwen2",
+						Family:            "granite",
 						ParameterSize:     "7B",
 						QuantizationLevel: "Q4_K_M",
 					},
@@ -345,10 +345,10 @@ func TestModels_Success(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
-	if got[0].Name != "qwen2.5:7b-instruct" {
+	if got[0].Name != "granite4.1:8b" {
 		t.Errorf("name = %q", got[0].Name)
 	}
-	if got[0].Details.Family != "qwen2" {
+	if got[0].Details.Family != "granite" {
 		t.Errorf("family = %q", got[0].Details.Family)
 	}
 }

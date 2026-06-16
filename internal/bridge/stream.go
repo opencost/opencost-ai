@@ -112,7 +112,7 @@ type ChatStreamChunk struct {
 	// tool-call metadata emitted during this frame.
 	Message Message `json:"message"`
 
-	// Thinking is Ollama's reasoning-model extension (qwen3, deepseek-r1,
+	// Thinking is Ollama's reasoning-model extension (deepseek-r1, granite,
 	// etc.) that emits private chain-of-thought between rounds. When
 	// present it is semantically distinct from Message.Content and
 	// the gateway surfaces it as a `thinking` SSE event.

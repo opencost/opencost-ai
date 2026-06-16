@@ -137,7 +137,7 @@ Version: opencost-ai-prompt/v0.1
 > one short sentence what you are about to ask it and why … do not
 > substitute a different tool that answers a different question."*
 
-- **Bias toward tools.** Small models (qwen2.5:7b, the v0.1
+- **Bias toward tools.** Small models (granite4.1:8b, the v0.1
   default) frequently skip tool calls when the answer "feels"
   derivable from context. This instruction compensates.
 - **Pre-call narration.** Asking the model to narrate its tool
@@ -259,7 +259,7 @@ the audit log.
 
 The prompt is reviewed at every gateway minor release and any time
 a model-family change is considered (e.g. swapping the default
-from `qwen2.5:7b-instruct` to `mistral-nemo:12b`). The review
+from `granite4.1:8b` to `granite4.1:30b`). The review
 answer at least these questions:
 
 1. Did any clause in the prompt measurably improve behaviour on

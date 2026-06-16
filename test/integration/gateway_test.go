@@ -132,7 +132,7 @@ func newGateway(t *testing.T, bridgeURL string, logQuery bool, perMin int) *gate
 	handler, err := server.New(server.Options{
 		Bridge:          bc,
 		AuthValidator:   validator,
-		DefaultModel:    "qwen2.5:7b-instruct",
+		DefaultModel:    "granite4.1:8b",
 		MaxRequestBytes: 8192,
 		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Audit:           audit.NewLogger(auditBuf, logQuery),
@@ -183,7 +183,7 @@ func TestIntegration_NonStreaming_FullFlow(t *testing.T) {
 	t.Parallel()
 	bridgeSrv := newBridgeStub(t, bridgeStub{
 		chatResp: &bridge.ChatResponse{
-			Model: "qwen2.5:7b-instruct",
+			Model: "granite4.1:8b",
 			Message: bridge.Message{
 				Role:    "assistant",
 				Content: "you spent $42 yesterday",
@@ -250,7 +250,7 @@ func TestIntegration_NonStreaming_FullFlow(t *testing.T) {
 	if got := gw.registry.Requests().WithLabelValues("/v1/ask", "POST", "200").Value(); got != 1 {
 		t.Errorf("requests_total = %v, want 1", got)
 	}
-	if got := gw.registry.ModelTokens().WithLabelValues("qwen2.5:7b-instruct", "prompt").Value(); got != 100 {
+	if got := gw.registry.ModelTokens().WithLabelValues("granite4.1:8b", "prompt").Value(); got != 100 {
 		t.Errorf("model_tokens prompt = %v, want 100", got)
 	}
 	if got := gw.registry.ToolCalls().WithLabelValues("opencost.allocation").Value(); got != 1 {
@@ -288,8 +288,8 @@ func TestIntegration_NonStreaming_FullFlow(t *testing.T) {
 func TestIntegration_Streaming_FullFlow(t *testing.T) {
 	t.Parallel()
 	chunks := []bridge.ChatStreamChunk{
-		{Model: "qwen2.5:7b-instruct", Thinking: "considering options"},
-		{Model: "qwen2.5:7b-instruct", Message: bridge.Message{
+		{Model: "granite4.1:8b", Thinking: "considering options"},
+		{Model: "granite4.1:8b", Message: bridge.Message{
 			Role: "assistant",
 			ToolCalls: []bridge.ToolCall{{
 				Function: bridge.ToolCallFunction{
@@ -298,11 +298,11 @@ func TestIntegration_Streaming_FullFlow(t *testing.T) {
 				},
 			}},
 		}},
-		{Model: "qwen2.5:7b-instruct", Message: bridge.Message{Role: "tool", Content: "$42"}},
-		{Model: "qwen2.5:7b-instruct", Message: bridge.Message{Role: "assistant", Content: "you "}},
-		{Model: "qwen2.5:7b-instruct", Message: bridge.Message{Role: "assistant", Content: "spent $42"}},
+		{Model: "granite4.1:8b", Message: bridge.Message{Role: "tool", Content: "$42"}},
+		{Model: "granite4.1:8b", Message: bridge.Message{Role: "assistant", Content: "you "}},
+		{Model: "granite4.1:8b", Message: bridge.Message{Role: "assistant", Content: "spent $42"}},
 		{
-			Model:           "qwen2.5:7b-instruct",
+			Model:           "granite4.1:8b",
 			Done:            true,
 			DoneReason:      "stop",
 			PromptEvalCount: 50,
@@ -404,7 +404,7 @@ func TestIntegration_RateLimit_FullFlow(t *testing.T) {
 	t.Parallel()
 	bridgeSrv := newBridgeStub(t, bridgeStub{
 		chatResp: &bridge.ChatResponse{
-			Model:   "qwen2.5:7b-instruct",
+			Model:   "granite4.1:8b",
 			Message: bridge.Message{Role: "assistant", Content: "ok"},
 			Done:    true,
 		},
@@ -453,7 +453,7 @@ func TestIntegration_OptInQueryCapture(t *testing.T) {
 	t.Parallel()
 	bridgeSrv := newBridgeStub(t, bridgeStub{
 		chatResp: &bridge.ChatResponse{
-			Model:   "qwen2.5:7b-instruct",
+			Model:   "granite4.1:8b",
 			Message: bridge.Message{Role: "assistant", Content: "answer"},
 			Done:    true,
 		},

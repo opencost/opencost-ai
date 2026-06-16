@@ -42,7 +42,7 @@ func TestLoad(t *testing.T) {
 			env: map[string]string{
 				EnvBridgeURL:         "https://bridge.internal:9000",
 				EnvListenAddr:        "127.0.0.1:9090",
-				EnvDefaultModel:      "mistral-nemo:12b",
+				EnvDefaultModel:      "granite4.1:30b",
 				EnvRequestTimeout:    "30s",
 				EnvMaxRequestBytes:   "16384",
 				EnvAuditLogQuery:     "true",
@@ -53,7 +53,7 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				BridgeURL:         "https://bridge.internal:9000",
 				ListenAddr:        "127.0.0.1:9090",
-				DefaultModel:      "mistral-nemo:12b",
+				DefaultModel:      "granite4.1:30b",
 				RequestTimeout:    30 * time.Second,
 				MaxRequestBytes:   16384,
 				AuditLogQuery:     true,
@@ -65,11 +65,11 @@ func TestLoad(t *testing.T) {
 		{
 			name: "partial override leaves other defaults in place",
 			env: map[string]string{
-				EnvDefaultModel: "llama3.1:8b-instruct",
+				EnvDefaultModel: "granite4.1:3b",
 			},
 			want: func() Config {
 				c := DefaultConfig()
-				c.DefaultModel = "llama3.1:8b-instruct"
+				c.DefaultModel = "granite4.1:3b"
 				return c
 			}(),
 		},

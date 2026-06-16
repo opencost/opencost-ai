@@ -62,7 +62,7 @@ where the chart template drops the override.
   `deploy/helm/opencost-ai/ci/integration-values.yaml` in shape so a
   template-rendering regression surfaces in both jobs. Full-stack
   validation lives in a nightly job on a larger runner.
-- **It does not run a real 7B model.** A `qwen2.5:7b-instruct`
+- **It does not run a real 8B model.** A `granite4.1:8b`
   container image + weights is ~5 GB. The harness does exercise the
   ORAS push path with a synthetic multi-KB GGUF when `oras` is on
   PATH — enough to catch a regression in the push/pull scripts
