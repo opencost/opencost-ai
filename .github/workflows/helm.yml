@@ -79,12 +79,25 @@ jobs:
       # right digest for `azure/setup-helm` and `helm/kind-action` and
       # validates it off a trusted source, installing from the upstream
       # release tarball keeps the supply-chain story in the project's
-      # hands. The tarball is verified by tag version only here; a
-      # follow-up should switch to a cosign-verified download.
+      # hands. Each download is SHA256-verified against upstream's own
+      # published checksum file before use — the same pattern
+      # airgap-e2e.yml already uses for these exact binaries — so
+      # accidental corruption in transit and opportunistic mirror
+      # poisoning are both caught rather than silently installed.
       - name: Install Helm
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/helm.tar.gz \
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o /tmp/helm.tar.gz.sha256 \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          # get.helm.sh's .sha256sum file names the upstream filename
+          # ("helm-v3.16.2-linux-amd64.tar.gz"), but we saved the
+          # tarball as helm.tar.gz. Rewrite the filename in the sum
+          # line so `sha256sum -c` looks at the file we actually have.
+          sed "s/helm-${HELM_VERSION}-linux-amd64.tar.gz\$/helm.tar.gz/" \
+            /tmp/helm.tar.gz.sha256 > /tmp/helm.sha256sum
+          ( cd /tmp && sha256sum -c helm.sha256sum )
           tar -xzf /tmp/helm.tar.gz -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
@@ -120,7 +133,7 @@ jobs:
 
       - name: Upload rendered manifests
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.3.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: helm-rendered-manifests
           path: |
@@ -140,16 +153,34 @@ jobs:
 
       - name: Install Helm
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/helm.tar.gz \
             "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL -o /tmp/helm.tar.gz.sha256 \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz.sha256sum"
+          # get.helm.sh's .sha256sum file names the upstream filename
+          # ("helm-v3.16.2-linux-amd64.tar.gz"), but we saved the
+          # tarball as helm.tar.gz. Rewrite the filename in the sum
+          # line so `sha256sum -c` looks at the file we actually have.
+          sed "s/helm-${HELM_VERSION}-linux-amd64.tar.gz\$/helm.tar.gz/" \
+            /tmp/helm.tar.gz.sha256 > /tmp/helm.sha256sum
+          ( cd /tmp && sha256sum -c helm.sha256sum )
           tar -xzf /tmp/helm.tar.gz -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
 
       - name: Install kind
         run: |
+          set -euo pipefail
           curl -fsSL -o /tmp/kind \
             "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSL -o /tmp/kind.sha256 \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          # kind publishes the sha as a bare hex string without the
+          # filename suffix that sha256sum -c expects, so normalise
+          # before checking.
+          printf '%s  kind\n' "$(awk '{print $1}' /tmp/kind.sha256)" > /tmp/kind.sha256sum
+          ( cd /tmp && sha256sum -c kind.sha256sum )
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
 

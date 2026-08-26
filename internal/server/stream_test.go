@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/bridge"
@@ -65,6 +66,7 @@ func newStreamingServer(
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(perMin),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -291,6 +293,7 @@ func TestAsk_Streaming_IncludesQueryWhenOptedIn(t *testing.T) {
 		Audit:           audit.NewLogger(&auditBuf, true),
 		RateLimiter:     ratelimit.New(0),
 		Metrics:         metrics.NewRegistry(),
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -334,6 +337,7 @@ func TestAsk_NonStreaming_IncrementsMetricsAndEmitsAudit(t *testing.T) {
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(0),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -386,6 +390,7 @@ func TestAsk_RateLimited_Returns429(t *testing.T) {
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(1),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)

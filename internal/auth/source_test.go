@@ -143,6 +143,47 @@ func TestSource_RotationThenEmpty(t *testing.T) {
 	}
 }
 
+func TestSource_SameMtimeDifferentSizeStillReloads(t *testing.T) {
+	t.Parallel()
+	// Regression test for the coarse-mtime-resolution gap: two rapid
+	// rotations (e.g. revoke-then-replace, done twice after a leak)
+	// can land on the same observable mtime tick on some filesystems.
+	// reloadIfChanged must not treat that as "unchanged" when the
+	// file's size has actually moved.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "token")
+
+	if err := os.WriteFile(path, []byte("v1-token"), 0o600); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+	pinned := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, pinned, pinned); err != nil {
+		t.Fatalf("chtimes v1: %v", err)
+	}
+
+	s := NewSource(path)
+	if err := s.Validate("v1-token"); err != nil {
+		t.Fatalf("v1 token should validate: %v", err)
+	}
+
+	// Rewrite with different-length content but pin the *exact same*
+	// mtime — the scenario a coarse filesystem clock could produce on
+	// its own, reproduced here deterministically.
+	if err := os.WriteFile(path, []byte("v2-token-is-longer"), 0o600); err != nil {
+		t.Fatalf("write v2: %v", err)
+	}
+	if err := os.Chtimes(path, pinned, pinned); err != nil {
+		t.Fatalf("chtimes v2: %v", err)
+	}
+
+	if err := s.Validate("v2-token-is-longer"); err != nil {
+		t.Fatalf("post-rotation v2 token should succeed despite unchanged mtime: %v", err)
+	}
+	if err := s.Validate("v1-token"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("stale v1 token should be rejected after the size-detected reload, got %v", err)
+	}
+}
+
 func TestSource_ConcurrentValidate(t *testing.T) {
 	t.Parallel()
 	// Guard against a regression where the read/write lock is taken

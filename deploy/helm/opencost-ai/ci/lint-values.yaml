@@ -6,6 +6,11 @@
 gateway:
   serviceMonitor:
     enabled: true
+  config:
+    # Required alongside serviceMonitor.enabled — see the guard in
+    # templates/gateway-servicemonitor.yaml and the comment on this
+    # key in values.yaml.
+    metricsClusterAccessible: true
   auth:
     create: true
     token: "ci-lint-fixture-token-not-a-secret"

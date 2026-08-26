@@ -69,8 +69,13 @@ type Config struct {
 	// does not specify one.
 	DefaultModel string
 
-	// RequestTimeout is the per-request deadline applied by the
-	// gateway to upstream calls. Must be positive.
+	// RequestTimeout bounds: the gateway's own HTTP read timeout for
+	// incoming requests; the non-streaming bridge client's per-call
+	// timeout (internal/bridge, via WithHTTPClient); and, on the SSE
+	// path, the write deadline applied to each outgoing frame
+	// (internal/server/stream.go), refreshed on every chunk so a long
+	// but actively-draining stream isn't cut off — only a stalled one
+	// is. Must be positive.
 	RequestTimeout time.Duration
 
 	// MaxRequestBytes is the maximum size of a request body the

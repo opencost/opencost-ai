@@ -11,3 +11,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+
+  # Base images in Dockerfile. RUNTIME_IMAGE is digest-pinned
+  # specifically so Dependabot has something concrete to bump here —
+  # an unpinned "latest"/floating tag gives it nothing to open a PR
+  # against.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"

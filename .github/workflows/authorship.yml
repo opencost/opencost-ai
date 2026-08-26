@@ -10,8 +10,11 @@
 #
 # This workflow fails the build on:
 #
-#   - any commit whose Author name is "Claude" or whose Author email
-#     is "noreply@anthropic.com";
+#   - any commit whose Author name starts with "Claude" or "Anthropic"
+#     (so "Claude", "Claude Sonnet 5", "Claude Code", etc. all match —
+#     see CLAUDE.md's own co-authorship convention for why a prefix
+#     match is needed here, not an exact one) or whose Author email is
+#     "noreply@anthropic.com";
 #   - any commit body whose "Signed-off-by:" trailer names "Claude"
 #     or "noreply@anthropic.com".
 #
@@ -89,7 +92,7 @@ jobs:
           # trip. Keep the list small and explicit — a generic
           # "reject any bot email" rule would false-positive on
           # GitHub's merge bot on squash PRs.
-          forbidden_name_re='^(claude|anthropic)$'
+          forbidden_name_re='^(claude|anthropic)\b'
           forbidden_email_re='noreply@anthropic\.com'
 
           fail=0

@@ -28,6 +28,52 @@ gateway release that ships them, referencing the prompt version tag.
   follow-up before release: the documented `ollama` ≥ 0.30.8 floor
   in `docs/air-gap-install.md` has not been re-verified against
   Granite 4.2 specifically.
+- Full-codebase secops review (application code, Kubernetes/Helm
+  deployment, CI/CD supply chain) with every finding fixed in the
+  same pass, verified against source before and after:
+  - **Gateway:** `OPENCOST_AI_REQUEST_TIMEOUT` now actually bounds
+    the non-streaming bridge call and, via a refreshed
+    `http.ResponseController` write deadline, how long a
+    connected-but-not-draining SSE client can pin a handler
+    goroutine and the upstream stream — previously neither path
+    enforced it despite the config doc comment claiming otherwise.
+    Model-reported tool names are sanitised before becoming a
+    Prometheus label, closing an unbounded-cardinality memory-growth
+    path. The bridge HTTP clients no longer follow redirects. The
+    auth token source now checks size alongside mtime so two rapid
+    rotations landing on the same filesystem-clock tick are no
+    longer indistinguishable from "unchanged."
+  - **Helm chart:** the gateway's loopback-only metrics default is
+    no longer unconditionally overridden by the chart — cluster
+    accessibility is now the explicit `gateway.config.
+    metricsClusterAccessible` opt-in the threat model already
+    described, and enabling `gateway.serviceMonitor` without it now
+    fails the template render instead of shipping a scrape target
+    that can never succeed. The equivalent NetworkPolicy rule gained
+    the same empty-allowlist guard the sibling ingress rule already
+    had. The bridge image no longer defaults to `latest`. The
+    distroless runtime base is now digest-pinned and tracked by a
+    new Dependabot `docker` ecosystem entry.
+  - **CI/CD:** six actions in the release signing/attestation
+    pipeline, plus `codeql.yml` and `vulnerability-scan.yml`'s SARIF
+    upload, are now SHA-pinned — closing gaps ranging from
+    already-flagged TODOs to unpinned GitHub-generated boilerplate.
+    Added the `scorecard.yml` workflow that `CHANGELOG.md`,
+    `SECURITY.md`, and branch protection already referenced but
+    which never existed. Fixed `sonarqube.yml` (wrong trigger branch,
+    no checkout step, blank project key — it could not previously
+    have run a scan). `helm.yml`'s Helm/kind installs are now
+    checksum-verified, matching the pattern already used in
+    `airgap-e2e.yml`. `authorship.yml`'s forbidden-author-name check
+    now matches by prefix instead of exact string, so it actually
+    catches the co-authorship convention this project's own
+    `CLAUDE.md` documents. `export-gguf.sh` validates a manifest
+    digest's shape before using it in a filesystem path. Corrected a
+    mislabeled `actions/upload-artifact` version comment (an
+    immutable, correct SHA — just a misleading comment next to it)
+    in `ci.yml` and `helm.yml`.
+  - `docs/security.md` updated throughout to match the code rather
+    than describe the intended-but-unenforced design.
 
 ### Governance
 

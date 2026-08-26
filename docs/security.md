@@ -180,10 +180,30 @@ not ambiguous.
   - `ReadHeaderTimeout` and `ReadTimeout` caps on the public
     listener. The write timeout is intentionally zero on the
     streaming path (SSE is long-lived), so per-request deadlines
-    live inside the handler via ctx.
+    live inside the handler instead: `internal/server/stream.go`
+    refreshes an `http.ResponseController` write deadline
+    (`OPENCOST_AI_REQUEST_TIMEOUT`) after every frame, so a client
+    that stops draining its socket without closing it — which does
+    *not* cancel the request context on its own — cannot pin the
+    handler goroutine and the upstream bridge stream indefinitely.
+    A long but actively-draining response is unaffected, since the
+    deadline resets on every chunk of forward progress.
+  - The non-streaming bridge client's per-call timeout is likewise
+    `OPENCOST_AI_REQUEST_TIMEOUT` (`internal/bridge`, wired via
+    `WithHTTPClient` in `cmd/gateway/main.go`), not a hardcoded
+    constant independent of operator config.
   - `MaxBytesReader` ceiling per-request.
   - Envelope + query size ceilings prevent context-window
     exhaustion on the upstream model.
+  - Tool names reported by the model are sanitised
+    (`internal/server/handlers.go` `sanitizeToolNameLabel`) before
+    they become a Prometheus label value, collapsing anything that
+    isn't a plausible MCP tool name to one fixed `_invalid` series.
+    Without this, an unbounded or prompt-injected tool name could
+    grow the gateway process's own memory via
+    `prometheus.CounterVec`/`HistogramVec`, which mint a permanent
+    series per unique label value with no expiry — independent of
+    whether `/metrics` itself is reachable.
 - *Residual risk:* a distributed attack from many stolen tokens
   would spread across many buckets and amplify upstream load.
   Cluster-wide NetworkPolicy and issuance-side token controls
@@ -221,9 +241,18 @@ not ambiguous.
 **Tampering**
 
 - *Threat:* on-wire manipulation of chat responses or tool
-  results.
-- *Mitigations:* same-cluster traffic over the pod network,
-  which is typically CNI-encrypted or physically isolated.
+  results; a compromised or MITM'd bridge issuing a redirect to
+  silently forward the caller's query body somewhere else.
+- *Mitigations:*
+  - Same-cluster traffic over the pod network, which is typically
+    CNI-encrypted or physically isolated.
+  - Both HTTP clients built in `internal/bridge.New` refuse to
+    follow redirects (`CheckRedirect` returns
+    `http.ErrUseLastResponse`) — a bridge that starts issuing 3xx
+    responses surfaces as an ordinary upstream error instead of
+    silently forwarding the request elsewhere. The bridge is a
+    single configured hop; there is no legitimate reason for either
+    client to follow a redirect.
 - *Residual risk:* traffic tampering by a CNI-layer attacker is
   out of scope for v0.1; in-cluster mTLS is a v0.2 consideration.
 
@@ -233,9 +262,14 @@ not ambiguous.
   - `*bridge.Error` retains at most `maxErrorBodyBytes` (4 KiB) of
     upstream body snippet, and that snippet never reaches the
     caller (problem+json is composed from a fixed detail string).
-  - Bridge request URLs are constructed with `path.Clean`-style
-    joining (`internal/bridge/client.go`) to avoid path-traversal
-    via the bridge base URL path prefix.
+  - Bridge request URLs are joined with a fixed, hardcoded endpoint
+    literal (`"/api/chat"`, `"/api/tags"`) at every call site — no
+    user or caller input ever reaches the path-join logic in
+    `internal/bridge/client.go`, so there is no path-traversal
+    vector today. That join is plain string concatenation, not
+    `path.Clean`-style normalisation; if this code ever grows a
+    caller-influenced path segment, add real cleaning at that point
+    rather than relying on the current absence of dynamic input.
 
 ### 4.3 Audit log (`internal/audit`)
 
@@ -271,9 +305,15 @@ not ambiguous.
 
 **Spoofing**
 
-- File-mtime watch reloads the token on rotation. If the file is
-  rewritten atomically (the Kubernetes Secret mount does this),
-  the old token stops working on the next request.
+- File-mtime-and-size watch reloads the token on rotation. If the
+  file is rewritten atomically (the Kubernetes Secret mount does
+  this), the old token stops working on the next request. Size is
+  checked alongside mtime specifically so two rapid rotations
+  (revoke-then-replace, done twice in quick succession after a
+  leak) that happen to land on the same mtime tick on a coarse
+  filesystem clock still trigger a reload, rather than the second,
+  real rotation being missed until a later stat sees a
+  distinguishable timestamp.
 - On a transient stat failure the source holds the cached token
   rather than locking the gateway out — a missing file is more
   likely a race against an atomic rewrite than a revocation.
@@ -320,6 +360,11 @@ not ambiguous.
   reference an existing Secret or pass `--set
   gateway.auth.token=...` at install time — the token never lives
   in a committed `values.yaml`.
+- All three default image tags are pinned (gateway to
+  `Chart.AppVersion`, bridge to the documented `v0.2.0`, Ollama to
+  a specific release) — none defaults to `latest`. `image.digest`
+  is available per-component as an opt-in for reproducible
+  air-gap installs.
 
 **Denial of service**
 
@@ -374,7 +419,13 @@ not ambiguous.
 - Default bind is `127.0.0.1:9090`. Cluster-wide exposure
   requires both a deliberate `OPENCOST_AI_METRICS_LISTEN_ADDR`
   override **and** a NetworkPolicy allowlist change. Both are
-  operator opt-ins.
+  operator opt-ins. In the Helm chart, the first opt-in is
+  `gateway.config.metricsClusterAccessible` (default `false`) —
+  the template only renders the override when this is explicitly
+  set, so a default `helm install` keeps the loopback-only floor
+  and `gateway.serviceMonitor.enabled=true` without it fails the
+  template render rather than shipping a ServiceMonitor that can
+  never successfully scrape.
 
 ## 5. Known risks the design accepts
 

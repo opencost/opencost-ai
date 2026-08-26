@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/auth"
@@ -62,6 +63,16 @@ type Options struct {
 	// Metrics is the Prometheus registry handed to every collaborator
 	// that observes metrics. Required.
 	Metrics *metrics.Registry
+
+	// RequestTimeout bounds how long the SSE handler will let a single
+	// write to the client block before giving up on it. It is applied
+	// per write (via http.ResponseController.SetWriteDeadline) and
+	// refreshed after every frame, so it caps how long a stalled —
+	// connected but not reading — client can pin the handler goroutine
+	// and the upstream bridge stream, without capping the total
+	// duration of a long but actively-draining response. Required;
+	// must be positive.
+	RequestTimeout time.Duration
 }
 
 // New returns an http.Handler exposing the v1 endpoint tree. The
@@ -93,6 +104,9 @@ func New(opts Options) (http.Handler, error) {
 	if opts.Metrics == nil {
 		return nil, errors.New("server: Metrics is required")
 	}
+	if opts.RequestTimeout <= 0 {
+		return nil, errors.New("server: RequestTimeout must be positive")
+	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -105,6 +119,7 @@ func New(opts Options) (http.Handler, error) {
 		audit:           opts.Audit,
 		limiter:         opts.RateLimiter,
 		metrics:         opts.Metrics,
+		requestTimeout:  opts.RequestTimeout,
 	}
 
 	authMW := auth.Middleware(opts.AuthValidator, opts.Logger)

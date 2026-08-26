@@ -73,6 +73,23 @@ gateway:
     # one knob that crosses the "never log query text by default"
     # non-negotiable and must remain off by default.
     auditLogQuery: false
+    # Controls whether OPENCOST_AI_METRICS_LISTEN_ADDR is overridden to
+    # ":9090" (reachable from other pods) or left unset, in which case
+    # the gateway binary's own default applies — loopback-only
+    # (127.0.0.1:9090), unreachable from other pods regardless of
+    # NetworkPolicy. docs/security.md §4.7 documents cluster-wide
+    # /metrics exposure as needing two independent operator opt-ins:
+    # this override AND a NetworkPolicy allowlist change. Leave this
+    # false (the loopback-only default holds) unless something outside
+    # this pod actually needs to reach /metrics — a Prometheus that
+    # isn't using gateway.serviceMonitor below, or that scrapes via the
+    # Service rather than the ServiceMonitor CRD. Enabling
+    # gateway.serviceMonitor.enabled requires this to also be true (the
+    # ServiceMonitor template fails the render otherwise, rather than
+    # rendering a scrape target that can never succeed). When you do
+    # enable this, scope networkPolicy.metricsIngress.allowedFrom
+    # first — it becomes the only remaining control on this port.
+    metricsClusterAccessible: false
 
   # Bearer-token secret wiring. The gateway loads its auth token from a
   # file mounted at /var/run/secrets/opencost-ai/token. The chart does
@@ -171,7 +188,12 @@ bridge:
 
   image:
     repository: ghcr.io/jonigl/ollama-mcp-bridge
-    tag: "latest"
+    # Pinned to the version documented in docs/air-gap-install.md.
+    # "latest" is exactly the anti-pattern docs/architecture.md calls
+    # out in the legacy prototype: two installs (or two air-gap mirror
+    # rebuilds) apart in time could otherwise run different bridge
+    # code with nothing in the release manifest to show it.
+    tag: "v0.2.0"
     pullPolicy: IfNotPresent
     digest: ""
 

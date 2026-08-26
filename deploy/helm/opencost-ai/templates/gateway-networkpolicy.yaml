@@ -41,7 +41,11 @@ spec:
         - port: 9090
           protocol: TCP
       from:
+        {{- if .Values.networkPolicy.metricsIngress.allowedFrom }}
         {{- toYaml .Values.networkPolicy.metricsIngress.allowedFrom | nindent 8 }}
+        {{- else }}
+        - podSelector: {}
+        {{- end }}
   egress:
     # DNS. Required for resolving bridge service name.
     - to:

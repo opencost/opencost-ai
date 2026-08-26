@@ -150,6 +150,23 @@ func (h *handlers) askStream(
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// rc bounds how long any single Write to the client may block. The
+	// public listener's http.Server has WriteTimeout:0 specifically so
+	// a long, actively-draining generation isn't cut off mid-stream —
+	// but that also means a client that stops reading its socket
+	// (without closing it) previously blocked the handler goroutine,
+	// the upstream bridge connection, and the in-flight generation
+	// indefinitely: net/http only cancels the request context when the
+	// connection closes, not when a peer merely stops draining it.
+	// Refreshing the deadline after every frame — rather than setting
+	// it once for the whole stream — caps stall time without capping
+	// total stream duration.
+	rc := http.NewResponseController(w)
+	refreshWriteDeadline := func() {
+		_ = rc.SetWriteDeadline(time.Now().Add(h.requestTimeout))
+	}
+	refreshWriteDeadline()
+
 	enc := json.NewEncoder(w)
 
 	// answerBuilder is populated only when the audit logger is
@@ -201,6 +218,12 @@ func (h *handlers) askStream(
 			})
 			return
 		}
+
+		// A fresh chunk from the bridge is forward progress; renew the
+		// write deadline so the writes below get the full timeout
+		// window rather than whatever was left over from the previous
+		// chunk's deadline.
+		refreshWriteDeadline()
 
 		if chunk.Model != "" {
 			finalModel = chunk.Model
