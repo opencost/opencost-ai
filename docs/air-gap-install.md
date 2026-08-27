@@ -18,7 +18,7 @@ install:
    from this repo.
 2. The **bridge** image (`ghcr.io/jonigl/ollama-mcp-bridge`), upstream.
 3. The **Ollama** runtime image (`ollama/ollama`), upstream.
-4. The **model weights** (`granite4.1:8b` by default), packaged
+4. The **model weights** (`granite4.2:8b` by default), packaged
    as a GGUF file wrapped in an OCI artefact.
 
 The output is a `helm install` against the chart in
@@ -59,7 +59,11 @@ Three rules the design enforces:
 
 ### On the connected staging host
 
-- `ollama` ≥ 0.30.8 (Granite 4.x needs a recent hybrid-model-capable runtime)
+- `ollama` ≥ 0.30.8 — floor carried over from the Granite 4.1 default;
+  **not yet re-verified against Granite 4.2** (see
+  `docs/architecture.md` §10 decision 6). Confirm against a real
+  `ollama pull granite4.2:8b` on the staging host before relying on
+  this number.
 - `oras` ≥ 1.2
 - `crane` (go-containerregistry) for lossless image copy
 - `cosign` ≥ 2.4 (optional, recommended for verification pre-push)
@@ -94,22 +98,22 @@ ORAS at.
 
 ```sh
 # 1. Pull on a machine with internet access.
-ollama pull granite4.1:8b
+ollama pull granite4.2:8b
 
 # 2. Locate the GGUF blob that backs the manifest. Ollama stores blobs
 #    under $HOME/.ollama/models/blobs/ as sha256-<hex> filenames on
 #    disk (the colon from the digest is replaced with a dash); the
 #    manifest under $HOME/.ollama/models/manifests/ references the
 #    layer whose mediaType is application/vnd.ollama.image.model.
-./scripts/air-gap/export-gguf.sh granite4.1:8b ./stage/granite4.1-8b.gguf
+./scripts/air-gap/export-gguf.sh granite4.2:8b ./stage/granite4.2-8b.gguf
 
 # 3. Push the GGUF to the internal registry as an OCI artefact. The
 #    reference uses an `ollama-model/` path prefix by convention so
 #    registry admins can scope policies separately from container
 #    images.
 ./scripts/air-gap/oras-push-model.sh \
-  registry.internal.example/ollama-model/granite4.1-8b:latest \
-  ./stage/granite4.1-8b.gguf
+  registry.internal.example/ollama-model/granite4.2-8b:latest \
+  ./stage/granite4.2-8b.gguf
 ```
 
 `scripts/air-gap/oras-push-model.sh` tags the artefact with the
@@ -178,8 +182,8 @@ this into a real `values.yaml`:
 # ollama:
 #   modelBootstrap:
 #     enabled: true
-#     ociRef: registry.internal.example/ollama-model/granite4.1-8b:latest
-#     modelName: granite4.1:8b
+#     ociRef: registry.internal.example/ollama-model/granite4.2-8b:latest
+#     modelName: granite4.2:8b
 ```
 
 When this ships, the Job will borrow the Ollama image (already has
@@ -198,10 +202,10 @@ pre-baked CSI snapshots), skip the Job entirely:
 # the pulled artefact (the push side preserves the operator-supplied
 # basename) and synthesises one if the artefact has none, so this
 # does not break when the source filename was, say,
-# `granite4.1-8b.Modelfile`.
+# `granite4.2-8b.Modelfile`.
 scripts/air-gap/oras-pull-model.sh \
-  registry.internal.example/ollama-model/granite4.1-8b:latest \
-  granite4.1:8b
+  registry.internal.example/ollama-model/granite4.2-8b:latest \
+  granite4.2:8b
 # Ollama writes the registered model into $HOME/.ollama which HOME is
 # relocated to /var/lib/ollama by the StatefulSet (see
 # deploy/helm/opencost-ai/templates/ollama-statefulset.yaml).
@@ -212,7 +216,7 @@ chart:
 
 ```sh
 kubectl -n opencost-ai exec pod/ollama-model-loader -- \
-  ollama list | grep granite4.1:8b
+  ollama list | grep granite4.2:8b
 ```
 
 ## Step 4 — Install the chart with mirrored images
@@ -396,7 +400,7 @@ standard `nvidia.com/gpu: 1` resource request under
 
 ### Licensing
 
-`granite4.1:8b`, `granite4.1:30b`, and `granite4.1:3b` are all
+`granite4.2:8b`, `granite4.2:30b`, and `granite4.2:3b` are all
 redistributable under the Apache 2.0 licence — shipping the weights
 into a private registry is covered by it. Teams pushing other
 models are responsible for confirming the licence terms of their
@@ -423,8 +427,8 @@ Cross-reference with `docs/architecture.md` §10:
 - Decision 1/2: **MCP transport is `streamable_http`.** The bridge
   config rendered by the chart already uses this, no air-gap-specific
   change.
-- Decision 5: **Default model is `granite4.1:8b`.** The VRAM
-  floor (~7 GB for the 8B default, ~18 GB for `granite4.1:30b`)
+- Decision 5: **Default model is `granite4.2:8b`.** The VRAM
+  floor (~7 GB for the 8B default, ~18 GB for `granite4.2:30b`)
   determines node sizing on the cluster side and Helm
   `ollama.resources.limits` values.
 

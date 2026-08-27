@@ -41,7 +41,7 @@ func TestLogger_EmitsStableShape(t *testing.T) {
 	err := l.Log(Event{
 		RequestID:        "rid-1",
 		CallerIdentity:   "cafebabe",
-		Model:            "granite4.1:8b",
+		Model:            "granite4.2:8b",
 		PromptTokens:     100,
 		CompletionTokens: 25,
 		ToolCalls: []ToolCall{
@@ -71,7 +71,7 @@ func TestLogger_EmitsStableShape(t *testing.T) {
 	if got.CallerIdentity != "cafebabe" {
 		t.Errorf("caller_identity = %q", got.CallerIdentity)
 	}
-	if got.Model != "granite4.1:8b" {
+	if got.Model != "granite4.2:8b" {
 		t.Errorf("model = %q", got.Model)
 	}
 	if got.PromptTokens != 100 || got.CompletionTokens != 25 {

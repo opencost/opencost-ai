@@ -396,11 +396,37 @@ not ambiguous.
   coordinated with the upstream maintainer and tracked in
   `SECURITY.md` scope.
 - **Model licensing drift.** The default model
-  (`granite4.1:8b`, Apache-2.0) and the documented Granite
+  (`granite4.2:8b`, Apache-2.0) and the documented Granite
   overrides are all permissively licensed today. An operator
   overriding to a non-permissive model (`llama3.1` variants
   under the Meta community license, for example) takes
   responsibility for that license fit.
+- **Reasoning-trace exposure (Granite 4.2 thinking mode).** Every
+  Granite 4.2 tag can emit a chain-of-thought before its answer,
+  which the gateway forwards verbatim as a `thinking` SSE event
+  (`internal/server/stream.go`). This is not logged to the audit
+  trail (`audit.Event` has no `Thinking` field, unconditionally,
+  regardless of `OPENCOST_AI_AUDIT_LOG_QUERY`) and it is only ever
+  sent to the same authenticated caller who issued the query, so it
+  does not cross a trust boundary the caller doesn't already sit
+  inside. The residual risk is client-side: a UI that logs or
+  screenshots the `thinking` stream captures cost data outside the
+  gateway's own audit controls. Operators building clients on top of
+  streaming `/v1/ask` should treat `thinking` events with the same
+  handling care as `token` events.
+- **Agentic-RL tool-use training (Granite 4.2, 8B/30B).** These tags
+  were trained with reinforcement learning on tool use, code editing,
+  and terminal/web-search actions inside sandboxed *training*
+  environments. That training does not add any capability at
+  inference time — the model can only invoke tools the bridge
+  actually registers from the OpenCost MCP server, and `internal/
+  bridge` has no code path that executes a model-proposed action
+  outside that tool-call protocol. The practical effect is a model
+  more inclined to *narrate or attempt* tool-shaped behaviour (e.g.
+  proposing a shell command in prose) than 4.1 was; this is a prompt-
+  quality question for `docs/prompts.md`, not a new attack surface,
+  since there is nothing in the gateway that would execute such a
+  proposal.
 
 ## 6. Operator checklist
 

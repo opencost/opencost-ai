@@ -137,7 +137,7 @@ Version: opencost-ai-prompt/v0.1
 > one short sentence what you are about to ask it and why … do not
 > substitute a different tool that answers a different question."*
 
-- **Bias toward tools.** Small models (granite4.1:8b, the v0.1
+- **Bias toward tools.** Small models (granite4.2:8b, the v0.1
   default) frequently skip tool calls when the answer "feels"
   derivable from context. This instruction compensates.
 - **Pre-call narration.** Asking the model to narrate its tool
@@ -151,6 +151,19 @@ Version: opencost-ai-prompt/v0.1
   where a cost-allocation question the tool cannot answer gets
   silently answered with an asset-cost tool returning a related
   but wrong number.
+- **Granite 4.2 note.** The 8B and 30B tags were trained with
+  agentic RL on tool use, code editing, and terminal/web-search
+  actions inside sandboxed *training* environments (see
+  `docs/architecture.md` §6.3 and `docs/security.md` §5). That
+  training makes the model more inclined to narrate or propose
+  tool-shaped actions than 4.1 was — e.g. suggesting a shell command
+  or a web search when neither is available. It cannot actually
+  invoke anything the bridge does not register as an MCP tool, but a
+  narrated proposal reads badly to an end user and should be treated
+  as a quality regression to watch for once `internal/prompt` ships.
+  This paragraph is a flag for the v0.2 prompt review, not a change
+  to the v0.1 prompt text below (v0.1 does not ship a system prompt
+  at all — see §1).
 
 ### 3.4 Output section
 
@@ -259,7 +272,8 @@ the audit log.
 
 The prompt is reviewed at every gateway minor release and any time
 a model-family change is considered (e.g. swapping the default
-from `granite4.1:8b` to `granite4.1:30b`). The review
+from `granite4.2:8b` to `granite4.2:30b`, or a point-release bump
+like 4.1 → 4.2). The review
 answer at least these questions:
 
 1. Did any clause in the prompt measurably improve behaviour on

@@ -29,7 +29,7 @@ const (
 const (
 	DefaultBridgeURL       = "http://ollama-mcp-bridge:8000"
 	DefaultListenAddr      = ":8080"
-	DefaultModel           = "granite4.1:8b"
+	DefaultModel           = "granite4.2:8b"
 	DefaultRequestTimeout  = 120 * time.Second
 	DefaultMaxRequestBytes = 8192
 	DefaultAuditLogQuery   = false

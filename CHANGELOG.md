@@ -9,6 +9,26 @@ gateway release that ships them, referencing the prompt version tag.
 
 ## [Unreleased]
 
+### Changed
+
+- Default model bumped from `granite4.1:8b` to `granite4.2:8b`
+  (IBM Granite 4.2, released 2026-08-25). Same size lineup
+  (3B/8B/30B) and Apache 2.0 licence as 4.1; all model references in
+  code, tests, Helm defaults, and docs updated accordingly. See
+  `docs/architecture.md` §10 decision 6 and `docs/security.md` §5
+  for the accompanying security review of the new switchable
+  thinking mode and agentic-RL tool-use training on the 8B/30B tags.
+
+### Security
+
+- Reviewed the Granite 4.1 → 4.2 model bump: no new attack surface
+  identified (reasoning traces stay outside the audit log exactly as
+  4.1's already did; agentic-RL training does not grant the model
+  any tool the bridge doesn't itself register). Flagged one item for
+  follow-up before release: the documented `ollama` ≥ 0.30.8 floor
+  in `docs/air-gap-install.md` has not been re-verified against
+  Granite 4.2 specifically.
+
 ### Governance
 
 - Adopted upstream opencost's branch model: `develop` is the
