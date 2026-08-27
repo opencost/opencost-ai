@@ -210,18 +210,57 @@ Tool use is the hard requirement; reasoning quality is secondary. The
 IBM Granite family is the chosen line: every published tag is Apache
 2.0 (so no per-weight licensing check is needed), and the instruct
 models support native tool calling and structured JSON output.
-Candidates and trade-offs:
+Candidates and trade-offs, updated for the Granite 4.2 line (released
+2026-08-25; see §10 decision 6 for the migration from 4.1):
 
 | Model | Size (Q4) | Tool use | Notes |
 |---|---|---|---|
-| `granite4.1:3b` *(CI smoke default)* | ~2 GB | Fair | Apache 2.0; smallest Granite — CI/plumbing only, below the production tool-use bar |
-| `granite4.1:8b` *(v0.1 default)* | ~5 GB | Good | Apache 2.0; ~7 GB VRAM floor |
-| `granite4.1:30b` | ~18 GB | Best | Apache 2.0; hybrid MoE, best reasoning, ~18 GB VRAM floor; documented upgrade path |
+| `granite4.2:3b` *(CI smoke default)* | ~2.2 GB | Fair | Apache 2.0; dense decoder-only; smallest Granite — CI/plumbing only, below the production tool-use bar |
+| `granite4.2:8b` *(v0.1 default)* | ~5.3 GB | Good | Apache 2.0; dense decoder-only; 128K context; ~7 GB VRAM floor; agentic-RL tool-use training |
+| `granite4.2:30b` | ~18 GB | Best | Apache 2.0; dense decoder-only; 128K context; best reasoning; ~18 GB VRAM floor; agentic-RL tool-use training; documented upgrade path |
 
-Ship `granite4.1:8b` as the default, exposed via Helm values key
+All three sizes are dense decoder-only models (not a mixture-of-
+experts architecture — an earlier draft of this table described the
+30B tag as hybrid MoE; that was inaccurate and has been corrected).
+Every Granite 4.2 tag ships a switchable **thinking mode** — full
+chain-of-thought, non-thinking, and a low-effort budget mode — plus,
+on the 8B and 30B tags, "agentic RL" training where the model
+practised tool use, code edits, and terminal/web-search actions
+inside sandboxed training environments. That training does not grant
+the model any capability at inference time beyond the tools the
+bridge actually exposes (§6.3.1 below), but it does mean the model is
+more inclined to *reason about* invoking tools it doesn't have — the
+system prompt's tool-scope language (`docs/prompts.md` §3.3, §3.5)
+carries added weight for this model family and should be re-verified
+against 4.2 behaviour before the prompt ships in v0.2.
+
+Ship `granite4.2:8b` as the default, exposed via Helm values key
 `ollama.defaultModel` so operators with headroom can substitute
-`granite4.1:30b` without rebuilding. README states the VRAM/RAM floor
+`granite4.2:30b` without rebuilding. README states the VRAM/RAM floor
 for each option and lists the override command.
+
+#### 6.3.1 Thinking-mode traces and the audit boundary
+
+Granite's chain-of-thought output arrives on the wire as Ollama's
+`thinking` field, separate from `message.content`
+(`internal/bridge/stream.go`). The gateway already treats it as
+distinct from the answer: it is forwarded to the *same authenticated
+caller* as a `thinking` SSE event, but it is never written to
+`audit.Event` (there is no `Thinking` field on that struct) and it is
+excluded from the buffered `Answer` string the audit log captures
+under `OPENCOST_AI_AUDIT_LOG_QUERY=true`. This is verified as of the
+4.2 migration and should stay true — do not add a `Thinking` field to
+`audit.Event` without the same opt-in gating query/answer already
+have, since reasoning traces can restate raw tool output (cost data)
+even more freely than the final answer does.
+
+Non-streaming callers (`POST /v1/ask` with `stream:false`) do not
+currently receive thinking content at all — `apiv1.AskResponse` has
+no field for it and `resp.Message.Content` is the only text copied
+into `Answer`. Whether to surface it there is an open product
+question, not a security one: exposing it changes response size and
+latency perception, not the trust boundary, since the recipient is
+already the caller who asked the question.
 
 ---
 
@@ -255,7 +294,7 @@ Response (non-streaming):
 ```json
 {
   "request_id": "uuid",
-  "model": "granite4.1:8b",
+  "model": "granite4.2:8b",
   "query": "echoed",
   "answer": "markdown",
   "tool_calls": [
@@ -305,7 +344,7 @@ Constrains model behavior to:
 ```
 OPENCOST_AI_BRIDGE_URL         default: http://ollama-mcp-bridge:8000
 OPENCOST_AI_LISTEN_ADDR        default: :8080
-OPENCOST_AI_DEFAULT_MODEL      default: granite4.1:8b
+OPENCOST_AI_DEFAULT_MODEL      default: granite4.2:8b
 OPENCOST_AI_REQUEST_TIMEOUT    default: 120s
 OPENCOST_AI_MAX_REQUEST_BYTES  default: 8192
 OPENCOST_AI_AUDIT_LOG_QUERY    default: false
@@ -380,7 +419,7 @@ Sized for Warwick's TAU methodology (1 BE + 2 FE-capable contributors), but FE w
 
 | Week | Work |
 |---|---|
-| 1 | Scaffold Go gateway; CI/CD; distroless image; cosign signing; integration test harness (kind + OpenCost + bridge + Ollama with `granite4.1:3b` smoke model). |
+| 1 | Scaffold Go gateway; CI/CD; distroless image; cosign signing; integration test harness (kind + OpenCost + bridge + Ollama with `granite4.2:3b` smoke model). |
 | 2 | `POST /v1/ask` happy path against the bridge. System prompt + guardrails. Problem+json errors. Bearer-token auth + token-file watcher. |
 | 3 | Streaming SSE. Rate limit. Audit log. Prometheus metrics. |
 | 4 | Helm chart: gateway + bridge + Ollama with PVC. NetworkPolicy. PodSecurity. ServiceMonitor. |
@@ -410,14 +449,35 @@ treats these as settled and implements against them.
 4. **Helm chart home: `opencost-ai` repo** (this repo). Separate release
    cadence from OpenCost core. Migration to `opencost-helm-chart` is
    deferred to v1.0 and out of scope.
-5. **Default model: `granite4.1:8b` with Helm override.** Values
+5. **Default model: `granite4.2:8b` with Helm override.** Values
    key `ollama.defaultModel` lets operators substitute
-   `granite4.1:30b` (better reasoning, hybrid MoE, ~18 GB VRAM floor)
-   or the smaller `granite4.1:3b` without rebuilding. README states the
-   VRAM floor (~7 GB for the 8B default, ~18 GB for the 30B upgrade)
-   and lists the override command. `granite4.1:30b` is the documented
-   upgrade path for operators with headroom. No bundled-weights
-   licensing check is needed because every Granite tag is Apache 2.0.
+   `granite4.2:30b` (better reasoning, dense decoder-only, ~18 GB VRAM
+   floor) or the smaller `granite4.2:3b` without rebuilding. README
+   states the VRAM floor (~7 GB for the 8B default, ~18 GB for the 30B
+   upgrade) and lists the override command. `granite4.2:30b` is the
+   documented upgrade path for operators with headroom. No
+   bundled-weights licensing check is needed because every Granite tag
+   is Apache 2.0.
+6. **Model bump: Granite 4.1 → 4.2 (2026-08-26).** IBM published
+   Granite 4.2 on 2026-08-25 — same Apache 2.0 licence, same 3B/8B/30B
+   size lineup, so this is a routine version bump rather than a new
+   open question under this section. What changed and was reviewed as
+   part of the bump (see `docs/security.md` §4 and §5 for the full
+   write-up):
+   - New: a switchable thinking/non-thinking/low-effort reasoning
+     mode on every size, and "agentic RL" tool-use training on the 8B
+     and 30B tags. Neither changes the trust boundary — see §6.3.1 —
+     but the system prompt's tool-scope language should be
+     re-validated against 4.2 once `internal/prompt` ships (v0.2).
+   - Verified unchanged: licence (Apache 2.0), size lineup, and the
+     "no per-weight licensing check needed" posture from decision 5.
+   - Not independently verified in this pass, flagged for a human
+     reviewer before release: the minimum `ollama` runtime version
+     needed to serve `granite4.2` correctly. `docs/air-gap-install.md`
+     keeps the previously documented `ollama` ≥ 0.30.8 floor, but that
+     number was not re-derived from Granite 4.2's release notes and
+     should be confirmed against a real pull before v0.1 ships with
+     4.2 as the default.
 
 ---
 

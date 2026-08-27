@@ -116,7 +116,7 @@ Request body (`apiv1.AskRequest`):
 ```json
 {
   "query": "what did the platform namespace spend yesterday?",
-  "model": "granite4.1:8b",
+  "model": "granite4.2:8b",
   "stream": false,
   "conversation_id": "550e8400-e29b-41d4-a716-446655440000"
 }
@@ -139,7 +139,7 @@ intentionally absent in v0.1; see §11.4 of the architecture doc.
 ```json
 {
   "request_id": "0a1b2c3d4e5f6789",
-  "model": "granite4.1:8b",
+  "model": "granite4.2:8b",
   "query": "what did the platform namespace spend yesterday?",
   "answer": "Yesterday the `platform` namespace spent **$42.17** …",
   "tool_calls": [
@@ -192,7 +192,7 @@ event: token
 data: {"text":"`platform` namespace spent **$42.17** "}
 
 event: done
-data: {"request_id":"0a1b2c3d4e5f6789","model":"granite4.1:8b","usage":{"prompt_tokens":412,"completion_tokens":187},"latency_ms":1843}
+data: {"request_id":"0a1b2c3d4e5f6789","model":"granite4.2:8b","usage":{"prompt_tokens":412,"completion_tokens":187},"latency_ms":1843}
 ```
 
 Headers set on the streaming response:
@@ -241,7 +241,7 @@ Lists Ollama models reachable through the bridge. Proxies
 {
   "models": [
     {
-      "name": "granite4.1:8b",
+      "name": "granite4.2:8b",
       "digest": "sha256:...",
       "size": 4969862636,
       "modified_at": "2026-04-15T10:22:03Z",
@@ -250,7 +250,7 @@ Lists Ollama models reachable through the bridge. Proxies
       "quantization": "Q4_K_M"
     }
   ],
-  "default": "granite4.1:8b"
+  "default": "granite4.2:8b"
 }
 ```
 

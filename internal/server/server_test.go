@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/auth"
@@ -76,7 +77,7 @@ func newTestServer(t *testing.T, fb *fakeBridge, opts ...func(*Options)) (*httpt
 	t.Helper()
 	if fb == nil {
 		fb = &fakeBridge{chatResp: &bridge.ChatResponse{
-			Model:   "granite4.1:8b",
+			Model:   "granite4.2:8b",
 			Message: bridge.Message{Role: "assistant", Content: "answer"},
 			Done:    true,
 		}}
@@ -84,12 +85,13 @@ func newTestServer(t *testing.T, fb *fakeBridge, opts ...func(*Options)) (*httpt
 	o := Options{
 		Bridge:          fb,
 		AuthValidator:   fakeValidator{expect: "secret"},
-		DefaultModel:    "granite4.1:8b",
+		DefaultModel:    "granite4.2:8b",
 		MaxRequestBytes: 8192,
 		Logger:          discardLogger(),
 		Audit:           audit.NewLogger(io.Discard, false),
 		RateLimiter:     ratelimit.New(0), // disabled for most tests
 		Metrics:         metrics.NewRegistry(),
+		RequestTimeout:  5 * time.Second,
 	}
 	for _, f := range opts {
 		f(&o)
@@ -173,6 +175,7 @@ func TestNew_RequiresDependencies(t *testing.T) {
 			Audit:           audit.NewLogger(io.Discard, false),
 			RateLimiter:     ratelimit.New(0),
 			Metrics:         metrics.NewRegistry(),
+			RequestTimeout:  time.Second,
 		}
 	}
 	cases := []struct {
@@ -187,6 +190,7 @@ func TestNew_RequiresDependencies(t *testing.T) {
 		{"no audit", func(o *Options) { o.Audit = nil }, "Audit"},
 		{"no rate limiter", func(o *Options) { o.RateLimiter = nil }, "RateLimiter"},
 		{"no metrics", func(o *Options) { o.Metrics = nil }, "Metrics"},
+		{"bad request timeout", func(o *Options) { o.RequestTimeout = 0 }, "RequestTimeout"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -250,7 +254,7 @@ func TestAllEndpoints_RejectBadToken(t *testing.T) {
 func TestAsk_HappyPath(t *testing.T) {
 	t.Parallel()
 	fb := &fakeBridge{chatResp: &bridge.ChatResponse{
-		Model: "granite4.1:8b",
+		Model: "granite4.2:8b",
 		Message: bridge.Message{
 			Role: "assistant", Content: "your cluster cost $42",
 			ToolCalls: []bridge.ToolCall{{
@@ -288,7 +292,7 @@ func TestAsk_HappyPath(t *testing.T) {
 	if got.Answer != "your cluster cost $42" {
 		t.Errorf("answer = %q", got.Answer)
 	}
-	if got.Model != "granite4.1:8b" {
+	if got.Model != "granite4.2:8b" {
 		t.Errorf("model = %q", got.Model)
 	}
 	if got.Usage.PromptTokens != 123 || got.Usage.CompletionTokens != 45 {
@@ -300,7 +304,7 @@ func TestAsk_HappyPath(t *testing.T) {
 	if got.RequestID == "" {
 		t.Errorf("request_id not populated")
 	}
-	if fb.lastChatReq.Model != "granite4.1:8b" {
+	if fb.lastChatReq.Model != "granite4.2:8b" {
 		t.Errorf("bridge not given default model: %q", fb.lastChatReq.Model)
 	}
 	if fb.lastChatReq.Stream {
@@ -313,16 +317,16 @@ func TestAsk_HappyPath(t *testing.T) {
 
 func TestAsk_UsesRequestModelOverride(t *testing.T) {
 	t.Parallel()
-	fb := &fakeBridge{chatResp: &bridge.ChatResponse{Model: "granite4.1:30b", Done: true}}
+	fb := &fakeBridge{chatResp: &bridge.ChatResponse{Model: "granite4.2:30b", Done: true}}
 	srv, _ := newTestServer(t, fb)
 	resp := postJSON(t, srv, "/v1/ask", "secret", apiv1.AskRequest{
-		Query: "hi", Model: "granite4.1:30b",
+		Query: "hi", Model: "granite4.2:30b",
 	})
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	if fb.lastChatReq.Model != "granite4.1:30b" {
+	if fb.lastChatReq.Model != "granite4.2:30b" {
 		t.Errorf("model override ignored: %q", fb.lastChatReq.Model)
 	}
 }
@@ -562,14 +566,14 @@ func TestModels_HappyPath(t *testing.T) {
 	t.Parallel()
 	fb := &fakeBridge{modelsResp: []bridge.TagModel{
 		{
-			Name:   "granite4.1:8b",
+			Name:   "granite4.2:8b",
 			Digest: "sha256:abc",
 			Size:   4_700_000_000,
 			Details: bridge.ModelDetails{
 				Family: "granite", ParameterSize: "8B", QuantizationLevel: "Q4_K_M",
 			},
 		},
-		{Name: "granite4.1:3b"},
+		{Name: "granite4.2:3b"},
 	}}
 	srv, _ := newTestServer(t, fb)
 
@@ -585,13 +589,13 @@ func TestModels_HappyPath(t *testing.T) {
 	if len(got.Models) != 2 {
 		t.Fatalf("len = %d, want 2", len(got.Models))
 	}
-	if got.Models[0].Name != "granite4.1:8b" {
+	if got.Models[0].Name != "granite4.2:8b" {
 		t.Errorf("first model name = %q", got.Models[0].Name)
 	}
 	if got.Models[0].Family != "granite" {
 		t.Errorf("first model family = %q", got.Models[0].Family)
 	}
-	if got.Default != "granite4.1:8b" {
+	if got.Default != "granite4.2:8b" {
 		t.Errorf("default = %q", got.Default)
 	}
 }
@@ -650,5 +654,50 @@ func TestRequestID_GeneratedWhenAbsent(t *testing.T) {
 	defer resp.Body.Close()
 	if got := resp.Header.Get("X-Request-ID"); got == "" {
 		t.Errorf("X-Request-ID not set")
+	}
+}
+
+func TestSanitizeToolNameLabel(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"real tool name", "opencost.allocation", "opencost.allocation"},
+		{"underscores and hyphens allowed", "opencost_alloc-v2", "opencost_alloc-v2"},
+		{"empty", "", "_invalid"},
+		{"whitespace", "please run rm -rf /", "_invalid"},
+		{"too long", strings.Repeat("a", maxToolNameLabelLen+1), "_invalid"},
+		{"exactly max length", strings.Repeat("a", maxToolNameLabelLen), strings.Repeat("a", maxToolNameLabelLen)},
+		{"newline injection", "opencost.allocation\ntool_calls_total 999", "_invalid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeToolNameLabel(tc.in); got != tc.want {
+				t.Errorf("sanitizeToolNameLabel(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestObserveToolCalls_UnboundedNamesCollapseToSentinel(t *testing.T) {
+	t.Parallel()
+	// A model that hallucinates or is prompt-injected into emitting
+	// novel "tool names" must not be able to mint unbounded Prometheus
+	// series — every invalid name should land on the same "_invalid"
+	// series rather than each getting its own.
+	reg := metrics.NewRegistry()
+	h := &handlers{metrics: reg}
+	h.observeToolCalls([]apiv1.ToolCall{
+		{Name: "not a real tool!!"},
+		{Name: "also-not-real; DROP TABLE"},
+		{Name: "opencost.allocation"},
+	})
+	if got := reg.ToolCalls().WithLabelValues("_invalid").Value(); got != 2 {
+		t.Errorf("_invalid tool_calls_total = %v, want 2", got)
+	}
+	if got := reg.ToolCalls().WithLabelValues("opencost.allocation").Value(); got != 1 {
+		t.Errorf("opencost.allocation tool_calls_total = %v, want 1", got)
 	}
 }

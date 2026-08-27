@@ -18,11 +18,23 @@
 # go.mod and this build pin the same Go line: current stable (1.26).
 # 1.26 is a floating tag for the latest 1.26 patch so the shipped
 # binary does not inherit unpatched stdlib CVEs from a stale point
-# release. Release builds override via
-# --build-arg GO_VERSION=<exact-patch> to pin deterministically.
+# release. The mechanism to pin deterministically for a specific
+# release exists (--build-arg GO_VERSION=<exact-patch>), but as of
+# this comment .github/workflows/release.yml does not invoke it — it
+# declares GO_VERSION for its own actions/setup-go steps only, in the
+# "1.26.x" range syntax setup-go understands, which is not a valid
+# Docker Hub tag suffix and must not be passed through as-is. Wiring
+# an exact-patch resolution into the release build is tracked as a
+# follow-up; until then this build-arg is a no-op in CI and the
+# floating tag above is what actually resolves.
 ARG GO_VERSION=1.26
 ARG BUILDER_IMAGE=golang:${GO_VERSION}-bookworm
-ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot
+# RUNTIME_IMAGE is pinned by digest (in addition to the human-
+# readable :nonroot tag) so the artifact that actually ships is
+# reproducible and diff-reviewable, independent of the builder's
+# floating-tag tradeoff above. Bump deliberately — Dependabot's
+# docker ecosystem entry (.github/dependabot.yml) tracks this.
+ARG RUNTIME_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 FROM ${BUILDER_IMAGE} AS build
 WORKDIR /src

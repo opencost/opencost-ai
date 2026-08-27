@@ -150,11 +150,12 @@ comment describing its effect.
 | Key                                          | Default                               | Purpose                                                                |
 | -------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------- |
 | `gateway.image.repository`                   | `ghcr.io/opencost/opencost-ai-gateway`| Override for air-gap / private mirrors                                 |
-| `gateway.config.defaultModel`                | `granite4.1:8b`                        | Default Ollama model; `granite4.1:30b` is the documented upgrade       |
+| `gateway.config.defaultModel`                | `granite4.2:8b`                        | Default Ollama model; `granite4.2:30b` is the documented upgrade       |
 | `gateway.config.auditLogQuery`               | `false`                               | **Do not flip without review** — opt-in to query capture in audit log  |
 | `gateway.auth.existingSecret`                | `""`                                  | Name of a pre-created Secret holding the bearer token                  |
 | `gateway.auth.create`                        | `false`                               | Render a chart-managed Secret; requires `gateway.auth.token`           |
 | `gateway.serviceMonitor.enabled`             | `false`                               | Render ServiceMonitor if Prometheus Operator is installed              |
+| `gateway.config.metricsClusterAccessible`    | `false`                               | Required if `serviceMonitor.enabled` is true; otherwise `/metrics` stays loopback-only regardless of NetworkPolicy |
 | `networkPolicy.metricsIngress.allowedFrom`   | `[{podSelector: {}}]` (same-namespace)| Who may scrape the unauthenticated `/metrics` listener                 |
 | `bridge.opencostMcp.host` / `port`           | `opencost.opencost.svc…` / `8081`     | In-cluster address of the OpenCost MCP server                          |
 | `ollama.persistence.size`                    | `20Gi`                                | PVC size; scale with the model count and size                          |

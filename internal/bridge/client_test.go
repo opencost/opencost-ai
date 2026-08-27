@@ -145,14 +145,14 @@ func TestChat_Success(t *testing.T) {
 			if req.Stream {
 				t.Errorf("stream must be forced to false, got true")
 			}
-			if req.Model != "granite4.1:8b" {
+			if req.Model != "granite4.2:8b" {
 				t.Errorf("model = %q", req.Model)
 			}
 			if len(req.Messages) != 1 || req.Messages[0].Content != "hello" {
 				t.Errorf("messages = %+v", req.Messages)
 			}
 			_ = json.NewEncoder(w).Encode(ChatResponse{
-				Model:           "granite4.1:8b",
+				Model:           "granite4.2:8b",
 				CreatedAt:       time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC),
 				Message:         Message{Role: "assistant", Content: "hi back"},
 				Done:            true,
@@ -165,7 +165,7 @@ func TestChat_Success(t *testing.T) {
 	c := mustClient(t, srv.URL)
 
 	resp, err := c.Chat(context.Background(), ChatRequest{
-		Model:    "granite4.1:8b",
+		Model:    "granite4.2:8b",
 		Messages: []Message{{Role: "user", Content: "hello"}},
 		Stream:   true, // client must override this
 	})
@@ -249,6 +249,67 @@ func TestChat_UpstreamError(t *testing.T) {
 	}
 }
 
+func TestChat_DoesNotFollowRedirect(t *testing.T) {
+	t.Parallel()
+	// A bridge that starts issuing 3xx responses — compromise, MITM on
+	// the pod network, DNS spoofing of the bridge Service — must not
+	// have the caller's query body silently forwarded to whatever host
+	// the redirect names. The client should surface the redirect as an
+	// ordinary upstream error instead of following it.
+	var followed bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followed = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	f := &fakeBridge{chat: func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL, http.StatusFound)
+	}}
+	srv := newBridgeServer(t, f)
+	c := mustClient(t, srv.URL)
+
+	_, err := c.Chat(context.Background(), ChatRequest{Model: "m"})
+	var bridgeErr *Error
+	if !errors.As(err, &bridgeErr) {
+		t.Fatalf("want *Error, got %T: %v", err, err)
+	}
+	if bridgeErr.Status != http.StatusFound {
+		t.Errorf("status = %d, want %d (redirect surfaced, not followed)", bridgeErr.Status, http.StatusFound)
+	}
+	if followed {
+		t.Error("client followed the redirect instead of refusing it")
+	}
+}
+
+func TestChatStream_DoesNotFollowRedirect(t *testing.T) {
+	t.Parallel()
+	var followed bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followed = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	f := &fakeBridge{chat: func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL, http.StatusFound)
+	}}
+	srv := newBridgeServer(t, f)
+	c := mustClient(t, srv.URL)
+
+	_, err := c.ChatStream(context.Background(), ChatRequest{Model: "m"})
+	var bridgeErr *Error
+	if !errors.As(err, &bridgeErr) {
+		t.Fatalf("want *Error, got %T: %v", err, err)
+	}
+	if bridgeErr.Status != http.StatusFound {
+		t.Errorf("status = %d, want %d (redirect surfaced, not followed)", bridgeErr.Status, http.StatusFound)
+	}
+	if followed {
+		t.Error("client followed the redirect instead of refusing it")
+	}
+}
+
 func TestChat_TransportFailure(t *testing.T) {
 	t.Parallel()
 	// Close the server before calling — any subsequent Dial fails.
@@ -320,8 +381,8 @@ func TestModels_Success(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(tagsResponse{
 			Models: []TagModel{
 				{
-					Name:       "granite4.1:8b",
-					Model:      "granite4.1:8b",
+					Name:       "granite4.2:8b",
+					Model:      "granite4.2:8b",
 					ModifiedAt: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 					Size:       4_700_000_000,
 					Digest:     "sha256:abc",
@@ -345,7 +406,7 @@ func TestModels_Success(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
-	if got[0].Name != "granite4.1:8b" {
+	if got[0].Name != "granite4.2:8b" {
 		t.Errorf("name = %q", got[0].Name)
 	}
 	if got[0].Details.Family != "granite" {

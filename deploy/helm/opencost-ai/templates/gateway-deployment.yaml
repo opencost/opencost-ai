@@ -49,11 +49,15 @@ spec:
           env:
             - name: OPENCOST_AI_LISTEN_ADDR
               value: ":8080"
-            # Override the loopback default so the in-cluster
-            # Prometheus / ServiceMonitor can scrape. A NetworkPolicy
-            # ingress rule below scopes who may reach this port.
+            {{- if .Values.gateway.config.metricsClusterAccessible }}
+            # Override the loopback default because the operator
+            # explicitly opted in (gateway.config.metricsClusterAccessible)
+            # so the in-cluster Prometheus / ServiceMonitor can scrape.
+            # The NetworkPolicy ingress rule below is the only
+            # remaining control on this port once this is set.
             - name: OPENCOST_AI_METRICS_LISTEN_ADDR
               value: ":9090"
+            {{- end }}
             - name: OPENCOST_AI_BRIDGE_URL
               value: {{ include "opencost-ai.bridge.url" . | quote }}
             - name: OPENCOST_AI_DEFAULT_MODEL

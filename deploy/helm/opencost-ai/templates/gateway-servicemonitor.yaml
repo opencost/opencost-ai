@@ -1,4 +1,7 @@
 {{- if and .Values.gateway.enabled .Values.gateway.serviceMonitor.enabled -}}
+{{- if not .Values.gateway.config.metricsClusterAccessible }}
+{{- fail "gateway.serviceMonitor.enabled requires gateway.config.metricsClusterAccessible=true — otherwise /metrics stays loopback-only inside the gateway pod and this ServiceMonitor can never successfully scrape it." }}
+{{- end }}
 {{- /*
 ServiceMonitor is a Prometheus Operator CRD. Rendering is gated on the
 operator opt-in (serviceMonitor.enabled) AND on the CRD being present

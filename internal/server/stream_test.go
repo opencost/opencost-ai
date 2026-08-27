@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/opencost/opencost-ai/internal/audit"
 	"github.com/opencost/opencost-ai/internal/bridge"
@@ -59,12 +60,13 @@ func newStreamingServer(
 	h, err := New(Options{
 		Bridge:          bc,
 		AuthValidator:   fakeValidator{expect: "secret"},
-		DefaultModel:    "granite4.1:8b",
+		DefaultModel:    "granite4.2:8b",
 		MaxRequestBytes: 8192,
 		Logger:          discardLogger(),
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(perMin),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -118,15 +120,15 @@ func readSSEFrames(t *testing.T, body io.Reader) []sseFrame {
 func TestAsk_Streaming_HappyPath(t *testing.T) {
 	t.Parallel()
 	chunks := []bridge.ChatStreamChunk{
-		{Model: "granite4.1:8b", Thinking: "let me check allocations"},
-		{Model: "granite4.1:8b", Message: bridge.Message{Role: "assistant", ToolCalls: []bridge.ToolCall{{
+		{Model: "granite4.2:8b", Thinking: "let me check allocations"},
+		{Model: "granite4.2:8b", Message: bridge.Message{Role: "assistant", ToolCalls: []bridge.ToolCall{{
 			Function: bridge.ToolCallFunction{Name: "opencost.allocation", Arguments: map[string]any{"window": "24h"}},
 		}}}},
-		{Model: "granite4.1:8b", Message: bridge.Message{Role: "tool", Content: "$42"}},
-		{Model: "granite4.1:8b", Message: bridge.Message{Role: "assistant", Content: "you spent "}},
-		{Model: "granite4.1:8b", Message: bridge.Message{Role: "assistant", Content: "$42"}},
+		{Model: "granite4.2:8b", Message: bridge.Message{Role: "tool", Content: "$42"}},
+		{Model: "granite4.2:8b", Message: bridge.Message{Role: "assistant", Content: "you spent "}},
+		{Model: "granite4.2:8b", Message: bridge.Message{Role: "assistant", Content: "$42"}},
 		{
-			Model:           "granite4.1:8b",
+			Model:           "granite4.2:8b",
 			Message:         bridge.Message{Role: "assistant"},
 			Done:            true,
 			DoneReason:      "stop",
@@ -205,7 +207,7 @@ func TestAsk_Streaming_HappyPath(t *testing.T) {
 	if done.Usage.PromptTokens != 100 || done.Usage.CompletionTokens != 20 {
 		t.Errorf("done usage = %+v", done.Usage)
 	}
-	if done.Model != "granite4.1:8b" {
+	if done.Model != "granite4.2:8b" {
 		t.Errorf("done model = %q", done.Model)
 	}
 	if done.RequestID == "" {
@@ -231,7 +233,7 @@ func TestAsk_Streaming_HappyPath(t *testing.T) {
 	if ev.Status != http.StatusOK || ev.Outcome != "ok" {
 		t.Errorf("audit status/outcome = %d/%q", ev.Status, ev.Outcome)
 	}
-	if ev.Model != "granite4.1:8b" {
+	if ev.Model != "granite4.2:8b" {
 		t.Errorf("audit model = %q", ev.Model)
 	}
 	if ev.PromptTokens != 100 || ev.CompletionTokens != 20 {
@@ -246,10 +248,10 @@ func TestAsk_Streaming_HappyPath(t *testing.T) {
 	if got := reg.Requests().WithLabelValues("/v1/ask", "POST", "200").Value(); got != 1 {
 		t.Errorf("requests_total{/v1/ask,POST,200} = %v, want 1", got)
 	}
-	if got := reg.ModelTokens().WithLabelValues("granite4.1:8b", "prompt").Value(); got != 100 {
+	if got := reg.ModelTokens().WithLabelValues("granite4.2:8b", "prompt").Value(); got != 100 {
 		t.Errorf("model_tokens prompt = %v, want 100", got)
 	}
-	if got := reg.ModelTokens().WithLabelValues("granite4.1:8b", "completion").Value(); got != 20 {
+	if got := reg.ModelTokens().WithLabelValues("granite4.2:8b", "completion").Value(); got != 20 {
 		t.Errorf("model_tokens completion = %v, want 20", got)
 	}
 	if got := reg.ToolCalls().WithLabelValues("opencost.allocation").Value(); got != 1 {
@@ -291,6 +293,7 @@ func TestAsk_Streaming_IncludesQueryWhenOptedIn(t *testing.T) {
 		Audit:           audit.NewLogger(&auditBuf, true),
 		RateLimiter:     ratelimit.New(0),
 		Metrics:         metrics.NewRegistry(),
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -317,7 +320,7 @@ func TestAsk_Streaming_IncludesQueryWhenOptedIn(t *testing.T) {
 func TestAsk_NonStreaming_IncrementsMetricsAndEmitsAudit(t *testing.T) {
 	t.Parallel()
 	fb := &fakeBridge{chatResp: &bridge.ChatResponse{
-		Model:   "granite4.1:8b",
+		Model:   "granite4.2:8b",
 		Message: bridge.Message{Role: "assistant", Content: "answer"},
 		Done:    true,
 		PromptEvalCount: 42, EvalCount: 8,
@@ -328,12 +331,13 @@ func TestAsk_NonStreaming_IncrementsMetricsAndEmitsAudit(t *testing.T) {
 	h, err := New(Options{
 		Bridge:          fb,
 		AuthValidator:   fakeValidator{expect: "secret"},
-		DefaultModel:    "granite4.1:8b",
+		DefaultModel:    "granite4.2:8b",
 		MaxRequestBytes: 8192,
 		Logger:          discardLogger(),
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(0),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
@@ -350,7 +354,7 @@ func TestAsk_NonStreaming_IncrementsMetricsAndEmitsAudit(t *testing.T) {
 	if got := reg.Requests().WithLabelValues("/v1/ask", "POST", "200").Value(); got != 1 {
 		t.Errorf("requests_total = %v, want 1", got)
 	}
-	if got := reg.ModelTokens().WithLabelValues("granite4.1:8b", "prompt").Value(); got != 42 {
+	if got := reg.ModelTokens().WithLabelValues("granite4.2:8b", "prompt").Value(); got != 42 {
 		t.Errorf("prompt tokens = %v, want 42", got)
 	}
 
@@ -386,6 +390,7 @@ func TestAsk_RateLimited_Returns429(t *testing.T) {
 		Audit:           audit.NewLogger(&auditBuf, false),
 		RateLimiter:     ratelimit.New(1),
 		Metrics:         reg,
+		RequestTimeout:  5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("server.New: %v", err)

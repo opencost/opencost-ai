@@ -24,16 +24,24 @@
 # Feel free to take a look at our documentation (https://docs.sonarqube.org/latest/analysis/github-integration/)
 # or reach out to our community forum if you need some help (https://community.sonarsource.com/c/sq/10)
 
+# NOTE: this workflow only produces a real scan once a maintainer sets
+# the SONAR_PROJECT_KEY repository variable (Settings > Secrets and
+# variables > Actions > Variables) alongside the SONAR_TOKEN and
+# SONAR_HOST_URL secrets referenced below. Until then the "require
+# SonarQube project key" step fails fast with an explicit message
+# instead of silently running a scan against an empty project key.
+
 name: SonarQube analysis
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [develop]
   pull_request:
-    branches: [ "main" ]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
+  contents: read
   pull-requests: read # allows SonarQube to decorate PRs with analysis results
 
 jobs:
@@ -41,6 +49,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SonarQube's new-code / SCM-blame features need history, not
+          # just the tip commit.
+          fetch-depth: 0
+
+      - name: Require SonarQube project key
+        if: ${{ vars.SONAR_PROJECT_KEY == '' }}
+        run: |
+          echo "::error::SONAR_PROJECT_KEY repository variable is not set — see the note at the top of .github/workflows/sonarqube.yml" >&2
+          exit 1
+
       - name: Analyze with SonarQube
 
         # You can pin the exact commit or the version.
@@ -53,9 +74,11 @@ jobs:
         with:
           # Additional arguments for the sonarcloud scanner
           args:
-            # Unique key of your project. You can find it in SonarQube > [my project] > Project Information (top-right menu)
-            # mandatory
-            -Dsonar.projectKey=
+            # Unique key of your project, from the SONAR_PROJECT_KEY
+            # repository variable — see the note at the top of this
+            # file. Not a secret; set as a variable, not a secret, so
+            # it's visible in workflow run logs for debugging.
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             # Comma-separated paths to directories containing main source files.
             #-Dsonar.sources= # optional, default is project base directory
             # When you need the analysis to take place in a directory other than the one from which it was launched

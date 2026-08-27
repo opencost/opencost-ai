@@ -72,7 +72,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		"audit_log_query", cfg.AuditLogQuery,
 	)
 
-	bc, err := bridge.New(cfg.BridgeURL)
+	bc, err := bridge.New(cfg.BridgeURL, bridge.WithHTTPClient(&http.Client{Timeout: cfg.RequestTimeout}))
 	if err != nil {
 		return fmt.Errorf("bridge client: %w", err)
 	}
@@ -91,6 +91,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		Audit:           auditLogger,
 		RateLimiter:     limiter,
 		Metrics:         reg,
+		RequestTimeout:  cfg.RequestTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("server.New: %w", err)

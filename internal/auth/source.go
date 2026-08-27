@@ -28,19 +28,26 @@ var (
 // Source is a file-backed bearer-token validator.
 //
 // Construct with NewSource; the token is read lazily on first
-// Validate call and re-read whenever the file's mtime advances. This
-// keeps startup fast (and robust against an empty secret at boot)
-// while still picking up rotations without a SIGHUP.
+// Validate call and re-read whenever the file's mtime or size
+// changes. This keeps startup fast (and robust against an empty
+// secret at boot) while still picking up rotations without a SIGHUP.
+// Checking size alongside mtime narrows (though does not eliminate)
+// the window where two rapid rotations — e.g. revoke-then-replace,
+// done twice in quick succession after a leak — could otherwise land
+// on the same mtime tick on a coarse-resolution filesystem and cause
+// the second, real rotation to be missed until a later stat sees a
+// distinguishable timestamp.
 //
 // A Source is safe for concurrent use. The hot path takes an RLock
 // around the in-memory token; the reload path upgrades to a write
-// lock only when mtime has actually moved.
+// lock only when mtime or size has actually moved.
 type Source struct {
 	path string
 
 	mu    sync.RWMutex
 	token []byte
 	mtime time.Time
+	size  int64
 	// loaded is true once reloadIfChanged has successfully read the
 	// file at least once. It exists to make the mtime comparison in
 	// reloadIfChanged meaningful: before any load, s.mtime is the zero
@@ -114,7 +121,7 @@ func (s *Source) reloadIfChanged() error {
 	}
 
 	s.mu.RLock()
-	unchanged := s.loaded && info.ModTime().Equal(s.mtime)
+	unchanged := s.loaded && info.ModTime().Equal(s.mtime) && info.Size() == s.size
 	s.mu.RUnlock()
 	if unchanged {
 		return nil
@@ -124,7 +131,7 @@ func (s *Source) reloadIfChanged() error {
 	defer s.mu.Unlock()
 	// Re-check under the write lock — another goroutine may have
 	// reloaded while we were waiting.
-	if s.loaded && info.ModTime().Equal(s.mtime) {
+	if s.loaded && info.ModTime().Equal(s.mtime) && info.Size() == s.size {
 		return nil
 	}
 
@@ -134,6 +141,12 @@ func (s *Source) reloadIfChanged() error {
 	}
 	s.token = bytes.TrimRight(raw, "\r\n\t ")
 	s.mtime = info.ModTime()
+	// info.Size() is the pre-read stat size, not len(raw) post-trim —
+	// deliberately: the reload-detection key must track what's on
+	// disk, not what remains after trimming trailing whitespace,
+	// otherwise a rotation that happens to trim to the same length as
+	// the previous token would be indistinguishable from "unchanged".
+	s.size = info.Size()
 	s.loaded = true
 	return nil
 }

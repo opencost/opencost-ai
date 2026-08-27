@@ -107,7 +107,27 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	for _, opt := range opts {
 		opt(c)
 	}
+	// The bridge is a single configured hop, never a multi-host chain,
+	// so there is no legitimate reason for either client to follow a
+	// redirect. Applied last, after options, so a caller-supplied
+	// WithHTTPClient cannot accidentally reintroduce the default
+	// follow-up-to-10-hops behaviour: an operator-configured bridge
+	// URL that starts issuing 3xx (compromise, MITM on the pod
+	// network, DNS spoofing of the bridge Service) would otherwise
+	// silently forward the caller's query body to whatever host the
+	// redirect names.
+	c.hc.CheckRedirect = refuseRedirects
+	c.streamHC.CheckRedirect = refuseRedirects
 	return c, nil
+}
+
+// refuseRedirects makes an *http.Client return the redirect response
+// itself (as a normal, if unexpected, 3xx) instead of following it.
+// do and ChatStream both already treat any non-2xx status as a
+// *Error, so a bridge that starts redirecting surfaces as a clean
+// upstream error rather than a silently-followed hop.
+func refuseRedirects(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // BaseURL returns the normalised base URL. Mostly useful for logs.

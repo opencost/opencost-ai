@@ -5,7 +5,7 @@
 #   export-gguf.sh <model-tag> <output-path>
 #
 # Example:
-#   export-gguf.sh granite4.1:8b ./stage/granite4.1-8b.gguf
+#   export-gguf.sh granite4.2:8b ./stage/granite4.2-8b.gguf
 #
 # The Ollama on-disk layout stores each model as a manifest plus a set
 # of sha256-addressed blobs. The manifest references one layer with
@@ -38,7 +38,7 @@ done
 # `ollama pull` on the caller's behalf — the whole point is that the
 # next step may run disconnected.
 if ! ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fqx "${tag}"; then
-  # -F: tags contain regex metachars (e.g. granite4.1:8b); fixed
+  # -F: tags contain regex metachars (e.g. granite4.2:8b); fixed
   # string match avoids false positives/negatives.
   echo "model tag not found locally: ${tag}" >&2
   echo "run: ollama pull ${tag}" >&2
@@ -96,6 +96,22 @@ gguf_digest="$(jq -r 'first(.layers[] | select(.mediaType == "application/vnd.ol
 
 modelfile_digest="$(jq -r 'first(.layers[] | select(.mediaType == "application/vnd.ollama.image.modelfile") | .digest) // "null"' "${manifest_path}")"
 
+# Both digests feed directly into a blobs/ path below. They came from
+# a manifest already resident on disk (written by a prior, separate
+# `ollama pull`), so today's threat model requires an already-tampered
+# local store for this to matter — but validating the shape before it
+# touches a path is cheap, and the script already applies this same
+# discipline to `tag` (grep -F, not a raw regex) for the same reason.
+# A value like "sha256:../../../etc/shadow" must never reach cp -f.
+validate_digest() {
+  local label="$1" digest="$2"
+  if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "manifest for ${tag} has a malformed ${label} digest: ${digest}" >&2
+    exit 7
+  fi
+}
+validate_digest "GGUF" "${gguf_digest}"
+
 # Blob path: blobs/sha256-<hex>  (Ollama replaces the ':' with '-').
 blob_file="${ollama_home}/blobs/${gguf_digest/:/-}"
 if [[ ! -f "${blob_file}" ]]; then
@@ -121,6 +137,7 @@ fi
 # tag ships with a separate Modelfile layer — some embed system
 # prompts in the manifest's config. Handle both.
 if [[ -n "${modelfile_digest}" && "${modelfile_digest}" != "null" ]]; then
+  validate_digest "Modelfile" "${modelfile_digest}"
   modelfile_blob="${ollama_home}/blobs/${modelfile_digest/:/-}"
   if [[ -f "${modelfile_blob}" ]]; then
     cp -f "${modelfile_blob}" "${out%.gguf}.Modelfile"

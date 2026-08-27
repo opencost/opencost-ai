@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,6 +34,7 @@ type handlers struct {
 	audit           *audit.Logger
 	limiter         *ratelimit.Limiter
 	metrics         *metrics.Registry
+	requestTimeout  time.Duration
 }
 
 // ask implements POST /v1/ask. When req.Stream is false it returns a
@@ -215,6 +217,33 @@ func (h *handlers) observeTokens(model string, prompt, completion int) {
 	}
 }
 
+// maxToolNameLabelLen and toolNameLabelRe bound what observeToolCalls
+// will accept as a Prometheus label value. A tool call's Name
+// originates in the model's own output, which shares its context
+// window with MCP tool results — the documented prompt-injection
+// surface in docs/security.md §5. prometheus.CounterVec/HistogramVec
+// mint one permanent time series per unique label value with no
+// expiry, so an unbounded or adversarially-influenced tool name would
+// grow the gateway process's own memory without bound, independent of
+// whether /metrics itself is reachable. Real MCP tool names look like
+// "opencost.allocation": short, dotted, plain ASCII.
+const maxToolNameLabelLen = 64
+
+var toolNameLabelRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// sanitizeToolNameLabel collapses any tool name that doesn't look like
+// a real MCP tool identifier to a fixed sentinel, so a hallucinated or
+// injected name can add at most one extra time series rather than one
+// per unique string. This only affects what gets recorded as a metric
+// label — the tool call itself, the audit log, and the answer the
+// caller sees are unaffected.
+func sanitizeToolNameLabel(name string) string {
+	if name == "" || len(name) > maxToolNameLabelLen || !toolNameLabelRe.MatchString(name) {
+		return "_invalid"
+	}
+	return name
+}
+
 // observeToolCalls increments the per-tool counter and, if the bridge
 // ever surfaces per-call timing, records it in the duration histogram.
 // Today neither the streaming nor the non-streaming bridge response
@@ -224,9 +253,10 @@ func (h *handlers) observeTokens(model string, prompt, completion int) {
 // up without a second metric-registry wiring change.
 func (h *handlers) observeToolCalls(tcs []apiv1.ToolCall) {
 	for _, tc := range tcs {
-		h.metrics.ToolCalls().WithLabelValues(tc.Name).Inc()
+		name := sanitizeToolNameLabel(tc.Name)
+		h.metrics.ToolCalls().WithLabelValues(name).Inc()
 		if tc.DurationMS > 0 {
-			h.metrics.ToolDuration().WithLabelValues(tc.Name).
+			h.metrics.ToolDuration().WithLabelValues(name).
 				Observe(float64(tc.DurationMS) / 1000.0)
 		}
 	}
