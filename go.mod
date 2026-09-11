@@ -1,11 +1,11 @@
 module github.com/opencost/opencost-ai
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 )
 
 require (
